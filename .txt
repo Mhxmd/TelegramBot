@@ -1,0 +1,28 @@
+Telegram API's
+
+https://core.telegram.org/bots/api
+
+Paynow API
+
+Explanation for bot.py
+
+To run the server.py use py server.py
+To run the bot.py , use py bot.py
+
+
+When you later deploy your bot (e.g., to Render, Railway, or Vercel),
+you’ll replace the local URL (http://localhost:4242/webhook) with your public one:
+
+https://yourdomain.com/webhook
+
+
+and Stripe will send live payment data there automatically.
+
+| Section          | What it Does               | What You Can Customize            |
+| ---------------- | -------------------------- | --------------------------------- |
+| Imports & Config | Loads keys and tools       | Add new API keys                  |
+| Balance System   | Stores user wallet data    | Rename file or switch to database |
+| Menus            | Builds Telegram UI         | Add buttons or wallet section     |
+| Payment Flow     | Integrates Stripe + PayNow | Add crypto or more options        |
+| Callback Router  | Handles button logic       | Add new features like “withdraw”  |
+| Main Function    | Runs the bot               | Deploy or switch to webhooks      |
