@@ -1,0 +1,28 @@
+{
+  "t_1761562621_1336081032_0": {
+    "buyer_id": 1336081032,
+    "seller_id": 0,
+    "product": {
+      "sku": null,
+      "name": "Cat",
+      "price": 15
+    },
+    "messages": [
+      {
+        "from": 1336081032,
+        "text": "hello",
+        "ts": 1761562632
+      }
+    ]
+  },
+  "t_1761564269_1336081032_0": {
+    "buyer_id": 1336081032,
+    "seller_id": 0,
+    "product": {
+      "sku": null,
+      "name": "Cat",
+      "price": 15
+    },
+    "messages": []
+  }
+}
