@@ -1,0 +1,145 @@
+ Telegram Marketplace Bot (with Stripe, PayNow, and Solana Wallet Integration)
+
+ Purpose
+This Telegram bot enables users to:
+- Buy and sell items directly within Telegram.
+- Chat with other users (publicly or privately like Carousell).
+- Make payments via Stripe, PayNow, or Solana blockchain.
+- Deposit and withdraw funds, view balances, and track orders.
+- Manage roles (buyer/seller) and listings dynamically.
+
+---
+
+ Prerequisites
+Before running the bot, ensure you have:
+- Python 3.11+ installed
+- Telegram Bot Token (create via @BotFather)
+- Stripe API keys (from Stripe Dashboard)
+- .env file with the following variables:
+
+BOT_TOKEN=your_telegram_bot_token_here  
+STRIPE_SECRET_KEY=sk_test_xxxxxxxxxxxxxxxxxxxxx  
+STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxx  
+
+(Optional) For Solana functionality:
+- Install Solana CLI or RPC node endpoint
+- Use: https://api.mainnet-beta.solana.com
+
+---
+
+ Python Package Requirements
+Install dependencies:
+pip install -r requirements.txt
+
+ requirements.txt
+python-telegram-bot==21.*  
+stripe  
+qrcode  
+pillow  
+python-dotenv  
+solana  
+solders  
+base58
+
+---
+
+ Setup & Running
+Step 1: Run the Bot  
+py bot.py
+
+Step 2: Run the Server  
+py server.py
+
+Step 3: Push Updates to GitHub  
+git add .  
+git commit -m "Updated bot and server files"  
+git push
+
+---
+
+ Deployment Notes
+When deploying to Render/Railway/Vercel:  
+Replace http://localhost:4242/webhook with your public domain URL:  
+https://yourdomain.com/webhook
+
+Stripe will send live payment data to that endpoint automatically.
+
+---
+
+ Project Structure
+Code/
+├── modules/
+│   ├── chat.py
+│   ├── notifications.py
+│   ├── seller.py
+│   ├── storage.py
+│   ├── ui.py
+│   └── wallet.py
+├── wallet_utils.py
+├── bot.py
+├── server.py
+├── .env
+├── balances.json
+├── messages.json
+├── orders.json
+├── roles.json
+├── seller_products.json
+└── wallets.json
+
+---
+
+ Key Components Overview
+Imports & Config – Loads env variables and APIs  
+Balance System – Tracks user funds in balances.json  
+Menus & UI – Builds Telegram keyboard layout  
+Payment Flow – Handles Stripe and PayNow integration  
+Chat System – Public and private messaging  
+Seller Center – Seller tools to list and manage products  
+Wallet System – Solana wallet generation and transactions  
+Callback Router – Handles Telegram button logic  
+Storage Layer – Persistent JSON storage  
+Main() – Launches polling loop  
+
+---
+
+ Payment Integrations
+ Stripe
+Used for testing card payments.
+
+ PayNow
+Supports Singapore PayNow QR payments.
+
+ Solana / USDC / USDT
+Each user gets a unique Solana wallet address.  
+Deposits add balance, withdrawals send SOL to a target address.
+
+---
+
+ Developer Commands
+/start – Launches main menu  
+/shop – Opens shop catalog  
+/wallet – Shows wallet & balance  
+/sell – Opens seller tools  
+/help – Displays bot info
+
+---
+
+ Module Overview
+chat.py – Handles buyer-seller and public chats  
+seller.py – Product management tools  
+ui.py – User interface layout and buttons  
+storage.py – Data persistence  
+wallet.py – Solana wallet operations  
+notifications.py – Handles bot alerts  
+wallet_utils.py – Solana keypair generation and transfers
+
+---
+ Suggestions for Improvement
+- Move from JSON to SQLite or Redis  
+- Use async Solana RPC and thread pools  
+- Encrypt private keys before storing  
+- Save logs to logs/bot.log  
+- Add real PayNow QR + webhook confirmation  
+- Add user profile cards and ratings  
+- Enhance chat with timestamps, read receipts  
+- Build admin dashboard for analytics

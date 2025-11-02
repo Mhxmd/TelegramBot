@@ -8,7 +8,7 @@ Explanation for bot.py
 
 To run the server.py use py server.py
 To run the bot.py , use py bot.py
-To push to github, use "git add." , git commit -m "Type ur message here", then lastly use git push
+To push to github, use "git add ." , git commit -m "Type ur message here", then lastly use git push
 
 
 

@@ -1,4 +1,4 @@
-
-balances.json
 __pycache__/
-*.pyc
+.env
+*.json
+.venv/
