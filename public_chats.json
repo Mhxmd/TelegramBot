@@ -1,0 +1,14 @@
+{
+  "general": {
+    "id": "general",
+    "name": "General Chat",
+    "desc": "Public room for everyone.",
+    "messages": []
+  },
+  "support": {
+    "id": "support",
+    "name": "Support Chat",
+    "desc": "Ask questions or get help.",
+    "messages": []
+  }
+}
