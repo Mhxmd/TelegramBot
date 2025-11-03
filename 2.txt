@@ -32,16 +32,41 @@ Install dependencies:
 pip install -r requirements.txt
 
  requirements.txt
-python-telegram-bot==21.*  
-stripe  
-qrcode  
-pillow  
-python-dotenv  
-solana  
-solders  
-base58
 
----
+ Python
+pip install python-telegram-bot==20.6
+pip install httpx==0.27.0
+
+Core dependencies
+
+pip install python-dotenv==1.0.1
+pip install aiofiles==23.2.1
+pip install orjson==3.9.10
+pip install cryptography==41.0.3
+
+Solana
+pip install solana==0.30.2
+pip install solders==0.18.1
+
+Utility and Development
+pip install rich==13.7.0
+pip install colorama==0.4.6
+pip install tqdm==4.66.1
+
+Wallet
+pip install mnemonic==0.20
+pip install base58==2.1.1
+
+For Deployment
+pip install uvloop==0.19.0
+pip install aiohttp==3.9.1
+
+
+If Error
+pip install <missing_module_name>
+
+
+
 
  Setup & Running
 Step 1: Run the Bot  
