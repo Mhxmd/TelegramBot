@@ -27,11 +27,8 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxx
 
 ---
 
- Python Package Requirements
+ 
 Install dependencies:
-pip install -r requirements.txt
-
- requirements.txt
 
  Python
 pip install python-telegram-bot==20.6
