@@ -2,6 +2,8 @@ import os
 import json
 import time
 
+PENDING_FILE = os.path.join(os.path.dirname(__file__), "pending_notifications.json")
+
 # files
 BALANCES_FILE = "balances.json"
 ORDERS_FILE = "orders.json"
@@ -174,3 +176,36 @@ def append_chat_message(thread_id: str, from_user: int, text: str):
         "ts": int(time.time())
     })
     save_json(MESSAGES_FILE, threads)
+
+# Notification inbox for each user
+
+def _load_pending():
+    if os.path.exists(PENDING_FILE):
+        with open(PENDING_FILE, "r", encoding="utf-8") as f:
+            try:
+                return json.load(f)
+            except Exception:
+                return {}
+    return {}
+
+def _save_pending(data):
+    with open(PENDING_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+def add_pending_notification(user_id: int, message: str):
+    data = _load_pending()
+    uid = str(user_id)
+    if uid not in data:
+        data[uid] = []
+    data[uid].append(message)
+    _save_pending(data)
+
+def get_pending_notifications(user_id: int):
+    data = _load_pending()
+    return data.get(str(user_id), [])
+
+def clear_pending_notifications(user_id: int):
+    data = _load_pending()
+    if str(user_id) in data:
+        data.pop(str(user_id))
+        _save_pending(data)

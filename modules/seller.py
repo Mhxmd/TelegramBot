@@ -5,6 +5,59 @@ from telegram.ext import ContextTypes
 
 from modules import storage
 
+
+def remove_seller_product(seller_id: int, sku: str):
+    """Deletes a product listing by SKU."""
+    data = storage.load_json(storage.SELLER_PRODUCTS_FILE)
+    items = data.get(str(seller_id), [])
+    new_items = [p for p in items if p["sku"] != sku]
+    data[str(seller_id)] = new_items
+    storage.save_json(storage.SELLER_PRODUCTS_FILE, data)
+    return len(items) != len(new_items)  # returns True if something was deleted
+
+async def show_seller_listings(update, context):
+    """Shows seller’s listings with remove buttons."""
+    q = update.callback_query
+    user_id = update.effective_user.id
+    items = storage.load_json(storage.SELLER_PRODUCTS_FILE).get(str(user_id), [])
+    if not items:
+        await q.edit_message_text(
+            "📄 *My Listings*\n\nYou have no active listings.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
+        )
+        return
+    rows = []
+    for p in items:
+        rows.append([
+            InlineKeyboardButton(f"{p['name']} - ${p['price']:.2f}", callback_data="noop"),
+            InlineKeyboardButton("🗑 Remove", callback_data=f"sell:remove_confirm:{p['sku']}")
+        ])
+    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+    await q.edit_message_text("📄 *My Listings*\n\nSelect one to remove:", parse_mode=ParseMode.MARKDOWN,
+                              reply_markup=InlineKeyboardMarkup(rows))
+
+async def confirm_remove_listing(update, context, sku: str):
+    q = update.callback_query
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes, remove", callback_data=f"sell:remove_do:{sku}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="menu:sell")]
+    ])
+    await q.edit_message_text(
+        f"⚠️ Are you sure you want to delete listing `{sku}`?",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb
+    )
+
+
+async def do_remove_listing(update, context, sku: str):
+    q = update.callback_query
+    user_id = update.effective_user.id
+    ok = remove_seller_product(user_id, sku)
+    msg = "✅ Listing removed." if ok else "❌ Could not find that listing."
+    await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]))
+
+
 def build_seller_menu(role: str):
     if role != "seller":
         text = (

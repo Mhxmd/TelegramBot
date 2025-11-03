@@ -52,6 +52,16 @@ logger = logging.getLogger("marketbot")
 # ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    # deliver any pending messages
+    pending = storage.get_pending_notifications(user_id)
+    if pending:
+        for note in pending:
+            try:
+                await update.message.reply_text(note, parse_mode="Markdown")
+            except Exception:
+                pass
+        storage.clear_pending_notifications(user_id)
+   
 
     # anti-spam
     if storage.is_spamming(user_id):
@@ -113,9 +123,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
         # ---------- SELLER ----------
-        elif data.startswith("sell:"):
-            _, action = data.split(":")
-            await seller.seller_center_router(update, context, action)
+        elif data.startswith("sell:list"):
+            await seller.show_seller_listings(update, context)
+
+        elif data.startswith("sell:remove_confirm:"):
+            _, _, sku = data.split(":")
+            await seller.confirm_remove_listing(update, context, sku)
+
+        elif data.startswith("sell:remove_do:"):
+            _, _, sku = data.split(":")
+            await seller.do_remove_listing(update, context, sku)
 
         # ---------- CHAT ----------
         elif data.startswith("contact:"):
