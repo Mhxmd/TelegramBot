@@ -112,6 +112,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ *Payment simulated for {name} x{qty}*\nSeller will verify shortly.",
                 parse_mode="Markdown"
             )
+        
+        elif data.startswith("payconfirm:"):
+            _, order_ref = data.split(":",1)
+            await handle_pay_confirm(update, context, order_ref)
+
+        elif data.startswith("paycancel:"):
+            _, order_ref = data.split(":",1)
+            await handle_pay_cancel(update, context, order_ref)
 
 
         elif data.startswith("stripe:"):

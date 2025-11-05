@@ -1,3 +1,6 @@
+VERCEL_PAY_URL = "https://fake-paynow-yourname.vercel.app"
+
+
 import stripe
 import qrcode
 from io import BytesIO
@@ -39,18 +42,34 @@ def get_any_product_by_sku(sku: str):
                 return it
     return None
 
-def generate_dummy_payment_qr(item_name, amount, order_id):
-    # Public test payment URL (fake gateway page we will build)
-    base_url = "https://faked-payment-demo.vercel.app/pay"
+def generate_dummy_payment_url(order_id: str, item_name: str, amount: float) -> str:
+    """
+    Builds the fake gateway URL with query params that the Vercel page will read.
+    Example: https://fake-paynow-mu.vercel.app/?order=123&item=Cat&amount=15
+    """
+    from urllib.parse import urlencode
+    qs = urlencode({"order": order_id, "item": item_name, "amount": f"{amount:.2f}"})
+    return VERCEL_PAY_URL.rstrip("/") + "/?" + qs
 
-    pay_url = f"{base_url}?order={order_id}&item={item_name}&amount={amount}"
+def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:
+    """
+    Create a QR image that points to the dummy payment page on Vercel.
+    Returns BytesIO ready to be sent as InputFile.
+    """
+    if order_id is None:
+        # make a short pseudo-random order id (timestamp + random)
+        import time, random
+        order_id = f"O{int(time.time())}{random.randint(100,999)}"
 
-    # generate QR to that link
-    img = qrcode.make(pay_url)
+    url = generate_dummy_payment_url(order_id, item_name, amount)
+    img = qrcode.make(url)
     bio = BytesIO()
     img.save(bio, "PNG")
     bio.seek(0)
-    return bio, pay_url
+    # attach metadata so caller can know order id / url if needed
+    bio.order_id = order_id   # dynamic attribute for convenience
+    bio.url = url
+    return bio
 
 
 # ---------------- MAIN MENU ----------------
@@ -85,12 +104,34 @@ def build_shop_keyboard():
 
 
 # ---------------- PAYNOW / STRIPE ----------------
-def generate_paynow_qr(amount, name="MarketplaceBot"):
-    qr_data = f"PayNow to {name} — Amount: ${amount:.2f}"
-    img = qrcode.make(qr_data)
+def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:
+    """
+    Create a QR image pointing to fake PayNow gateway.
+    """
+    import time, random
+    from urllib.parse import urlencode
+
+    # Create order id if missing
+    if order_id is None:
+        order_id = f"O{int(time.time())}{random.randint(100,999)}"
+
+    # build fake pay URL
+    qs = urlencode({
+        "order": order_id,
+        "item": item_name,
+        "amount": f"{amount:.2f}"
+    })
+    url = VERCEL_PAY_URL.rstrip("/") + "/?" + qs
+
+    # make QR
+    img = qrcode.make(url)
     bio = BytesIO()
     img.save(bio, "PNG")
     bio.seek(0)
+
+    # Attach useful metadata
+    bio.order_id = order_id
+    bio.url = url
     return bio
 
 async def create_stripe_checkout(update, context, sku, qty):
@@ -126,35 +167,69 @@ async def create_stripe_checkout(update, context, sku, qty):
 
 import uuid
 
-async def show_paynow(update, context, sku, qty):
+async def show_paynow(update, context, sku: str, qty: int):
+    """
+    Called when user chooses PayNow QR. Generates a dummy gateway link + QR and
+    sends a nice message with buttons:
+    - ✅ I HAVE PAID  -> buyer clicks after "pretend pay"
+    - ❌ Cancel
+    """
+    q = update.callback_query
+    user_id = update.effective_user.id
+
+    # lookup item
     item = get_any_product_by_sku(sku)
+    if not item:
+        await q.answer("Item not found.", show_alert=True)
+        return
+
     qty = clamp_qty(qty)
-    total = item["price"] * qty
-    order_id = str(uuid.uuid4())[:8]  # fake short order id
+    total = float(item["price"]) * qty
 
-    qr, pay_url = generate_dummy_payment_qr(item["name"], total, order_id)
+    # create an order record (pending) and get a local order id
+    # you probably already have add_order; reuse it to record order
+    # We'll also create a unique order id for the fake gateway
+    import time, random
+    order_ref = f"ORD{int(time.time())}{random.randint(100,999)}"
+    storage.add_order(user_id, item["name"], qty, total, "PayNow (fake)", int(item.get("seller_id", 0)))
+    # (optionally, you might want to embed order_ref into stored order; adjust add_order if needed)
 
-    storage.add_order(update.effective_user.id, item["name"], qty, total, "PayNow (Demo)", item["seller_id"])
+    # generate QR that points to the Vercel fake gateway
+    qr = generate_paynow_qr(total, item["name"], order_ref)
 
+    # buttons for the flow (I HAVE PAID should trigger an admin/process flow)
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I've Paid", callback_data=f"paynow_sim_success:{item['name']}:{qty}:{order_id}")],
-        [InlineKeyboardButton("🌐 Open Payment Page", url=pay_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu:main")]
+        [InlineKeyboardButton("✅ I HAVE PAID", callback_data=f"payconfirm:{order_ref}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{order_ref}")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
     ])
 
-    await update.effective_message.reply_photo(
-        InputFile(qr, filename="paynow_demo.png"),
-        caption=(
-            f"🇸🇬 *Demo PayNow Gateway*\n\n"
-            f"Amount: *${total:.2f}*\n"
-            f"Order ID: `{order_id}`\n\n"
-            f"📷 Scan QR or tap button below to simulate payment\n"
-            f"➡️ {pay_url}"
-        ),
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=kb
+    caption = (
+        f"🇸🇬 *FAKE PayNow — Test Mode*\n\n"
+        f"*Item:* {item['name']}\n"
+        f"*Qty:* {qty}\n"
+        f"*Amount:* ${total:.2f}\n\n"
+        f"Scan the QR or open: `{qr.url}`\n\n"
+        "This is a demo gateway — click *I HAVE PAID* after you 'pretend pay'."
     )
 
+    # send QR as an image with caption + buttons
+    try:
+        await q.message.reply_photo(
+            photo=InputFile(qr, filename=f"paynow_{order_ref}.png"),
+            caption=caption,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb
+        )
+    except Exception:
+        # fallback: send url and buttons if sending image fails
+        await q.edit_message_text(
+            f"{caption}\n\nQR could not be sent; open the link instead: {qr.url}",
+            reply_markup=kb,
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    # done — later your callback_router should handle payconfirm: and paycancel:
 
 
 
