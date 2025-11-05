@@ -106,9 +106,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, sku, qty = data.split(":")
             await ui.on_qty(update, context, sku, int(qty))
 
-        elif data.startswith("checkout:"):
-            _, sku, qty = data.split(":")
-            await ui.on_checkout(update, context, sku, int(qty))
+        elif data.startswith("paynow_sim_success:"):
+            _, name, qty = data.split(":")
+            await update.callback_query.edit_message_text(
+                f"✅ *Payment simulated for {name} x{qty}*\nSeller will verify shortly.",
+                parse_mode="Markdown"
+            )
+
 
         elif data.startswith("stripe:"):
             _, sku, qty = data.split(":")

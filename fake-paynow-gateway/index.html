@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PayNow Simulation</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f1f5f9;
+    text-align: center;
+    padding: 50px;
+}
+.container {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    max-width: 350px;
+    margin: auto;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+button {
+    width: 100%;
+    padding: 14px;
+    background: #0ea5e9;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+}
+button:active {
+    transform: scale(0.98);
+}
+.success {
+    display: none;
+    font-size: 20px;
+    color: #22c55e;
+    margin-top: 15px;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🇸🇬 PayNow Test Gateway</h2>
+    <p><b>Item:</b> <span id="item"></span></p>
+    <p><b>Amount:</b> $<span id="amount"></span></p>
+    <button id="payBtn">Pay Now</button>
+    <p id="success" class="success">✅ Payment Successful!</p>
+    <p id="order"></p>
+</div>
+
+<script>
+const query = new URLSearchParams(window.location.search);
+document.getElementById("item").innerText = query.get("item");
+document.getElementById("amount").innerText = query.get("amount");
+document.getElementById("order").innerText = "Order ID: " + query.get("order");
+
+document.getElementById("payBtn").onclick = () => {
+    document.getElementById("success").style.display = "block";
+};
+</script>
+
+</body>
+</html>
