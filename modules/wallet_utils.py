@@ -203,3 +203,19 @@ def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
     except Exception as e:
         logger.error(f"send_sol error: {e}")
         return {"error": str(e)}
+
+# --------------------------------------------------------------------------
+# Escrow Functions (shared)
+# --------------------------------------------------------------------------
+
+def escrow_hold(user_id, amount):
+    # reduce buyer wallet
+    storage.add_balance(user_id, -amount)
+    # track escrow internally
+    escrow = storage.load_json("escrow.json")
+    escrow[user_id] = amount
+    storage.save_json("escrow.json", escrow)
+
+
+def release_escrow(seller_id, amount):
+    storage.add_balance(seller_id, amount)

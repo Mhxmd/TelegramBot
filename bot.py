@@ -114,12 +114,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data.startswith("payconfirm:"):
-            _, order_ref = data.split(":",1)
-            await handle_pay_confirm(update, context, order_ref)
+            order_id = data.split(":")[1]
+            from modules.ui import handle_pay_confirm
+            await handle_pay_confirm(update, context, order_id)
 
         elif data.startswith("paycancel:"):
-            _, order_ref = data.split(":",1)
-            await handle_pay_cancel(update, context, order_ref)
+            order_id = data.split(":")[1]
+            from modules.ui import handle_pay_cancel
+            await handle_pay_cancel(update, context, order_id)
 
 
         elif data.startswith("stripe:"):
@@ -129,6 +131,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("paynow:"):
             _, sku, qty = data.split(":")
             await ui.show_paynow(update, context, sku, int(qty))
+
+        elif data.startswith("ship:"):
+            _, order_id = data.split(":")
+            from modules.ui import handle_mark_shipped
+            await handle_mark_shipped(update, context, order_id)
+
+        elif data.startswith("release:"):
+            _, order_id = data.split(":")
+            from modules.ui import handle_release_payment
+            await handle_release_payment(update, context, order_id)
+
+        elif data.startswith("dispute:"):
+            _, order_id = data.split(":")
+            from modules.ui import handle_dispute_case
+            await handle_dispute_case(update, context, order_id)
+
 
         elif data == "back_to_shop":
             text, kb = ui.build_shop_keyboard()
@@ -145,7 +163,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("sell:remove_do:"):
             _, _, sku = data.split(":")
             await seller.do_remove_listing(update, context, sku)
-
+        
         # ---------- CHAT ----------
         elif data.startswith("contact:"):
             # buyer taps "Contact Seller"

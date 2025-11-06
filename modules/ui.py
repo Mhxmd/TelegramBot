@@ -329,7 +329,134 @@ async def on_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, q
 
     await q.edit_message_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
 
+async def show_post_payment_options(chat_id, context, order_id, seller_id):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 I Have Shipped", callback_data=f"ship:{order_id}")],
+        [InlineKeyboardButton("✅ I Received My Item", callback_data=f"recv:{order_id}")],
+        [InlineKeyboardButton("❗ Report Issue", callback_data=f"dispute:{order_id}")]
+    ])
+
+    await context.bot.send_message(
+        chat_id,
+        f"🛒 Order **{order_id}** is now in ESCROW.\n\n"
+        f"Seller will ship your item.\nFunds are held securely.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
 
 async def on_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
     # Checkout simply returns to on_buy screen
     await on_buy(update, context, sku, qty)
+
+# ===========================
+# ESCROW PAY CONFIRM HANDLERS
+# ===========================
+
+async def handle_pay_confirm(update, context, order_id):
+    from modules import storage
+    q = update.callback_query
+    
+    # Update order status to escrow_hold
+    storage.update_order_status(order_id, "escrow_hold")
+
+    msg = (
+        f"✅ *Payment Confirmed!*\n"
+        f"Order `{order_id}` has been placed.\n"
+        f"Funds are now held securely in escrow.\n\n"
+        f"📦 Seller will ship your item soon."
+    )
+
+    # Attempt to edit message first (works when callback pressed inside Telegram)
+    try:
+        await q.edit_message_text(msg, parse_mode="Markdown")
+    except:
+        # If editing fails (like returning from Vercel), send a new message instead
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=msg,
+            parse_mode="Markdown"
+        )
+
+
+async def handle_pay_cancel(update, context, order_id):
+    q = update.callback_query
+
+    msg = "❌ Payment cancelled. Your order has been discarded."
+
+    try:
+        await q.edit_message_text(msg)
+    except:
+        await context.bot.send_message(update.effective_user.id, msg)
+
+
+# ===========================
+# ESCROW FLOW CONTINUATION
+# ===========================
+
+async def handle_mark_shipped(update, context, order_id):
+    from modules import storage
+    q = update.callback_query
+    order = storage.get_order(order_id)
+
+    storage.update_order_status(order_id, "shipped")
+
+    # Notify buyer
+    try:
+        await context.bot.send_message(
+            order["buyer_id"],
+            f"📦 Your seller has marked order `{order_id}` as shipped!\n\nPlease confirm once received."
+        )
+    except:
+        pass
+
+    msg = f"✅ Order `{order_id}` marked as shipped."
+    try:
+        await q.edit_message_text(msg)
+    except:
+        await q.message.reply_text(msg)
+
+async def handle_release_payment(update, context, order_id):
+    from modules import storage
+    q = update.callback_query
+    order = storage.get_order(order_id)
+
+    storage.update_order_status(order_id, "released")
+
+    # Notify seller
+    try:
+        await context.bot.send_message(
+            order["seller_id"],
+            f"💰 Buyer confirmed receipt!\nPayment released for order `{order_id}` ✅"
+        )
+    except:
+        pass
+
+    msg = f"🎉 Payment released for order `{order_id}`!\nHope you enjoy your item!"
+    try:
+        await q.edit_message_text(msg)
+    except:
+        await q.message.reply_text(msg)
+
+async def handle_dispute_case(update, context, order_id):
+    from modules import storage
+    q = update.callback_query
+    order = storage.get_order(order_id)
+
+    storage.update_order_status(order_id, "disputed")
+
+    # Notify admins (Escrow team)
+    ADMIN_ID = 123456789  # replace with your Telegram ID
+    try:
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"🚨 DISPUTE OPENED\nOrder `{order_id}`\nBuyer: `{order['buyer_id']}`\nSeller: `{order['seller_id']}`"
+        )
+    except:
+        pass
+
+    msg = f"⚠️ Dispute opened for order `{order_id}`.\nAdmin will review."
+    try:
+        await q.edit_message_text(msg)
+    except:
+        await q.message.reply_text(msg)

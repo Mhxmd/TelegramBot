@@ -165,3 +165,9 @@ wallet_utils.py – Solana keypair generation and transfers
 - Add user profile cards and ratings  
 - Enhance chat with timestamps, read receipts  
 - Build admin dashboard for analytics
+
+“My bot implements a simulated fintech escrow system.
+Once payment is made, funds are held securely in escrow.
+Seller marks item as shipped, buyer confirms delivery, then funds release.
+If there's a dispute, funds freeze and admin reviews.
+This models real-world systems like Shopee PayLater and Stripe escrow.”
