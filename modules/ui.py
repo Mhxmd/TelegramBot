@@ -460,3 +460,79 @@ async def handle_dispute_case(update, context, order_id):
         await q.edit_message_text(msg)
     except:
         await q.message.reply_text(msg)
+
+# ===========================================================
+# ✅ ADMIN DISPUTE PANEL
+# ===========================================================
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
+import modules.storage as storage
+import os
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+if update.effective_user.id == ADMIN_ID:
+    buttons.append([InlineKeyboardButton("⚠️ Admin Disputes", callback_data="admin:disputes")])
+
+
+async def admin_open_disputes(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    if uid != ADMIN_ID:
+        return await q.answer("🚫 Admin Only")
+
+    disputes = storage.get_all_disputed_orders()
+
+    if not disputes:
+        return await q.edit_message_text(
+            "✅ No active disputes",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
+        )
+
+    text = "⚠️ *Active Disputes*\n\n"
+    buttons = []
+
+    for oid, o in disputes.items():
+        text += f"• {o['item']} — ${o['amount']:.2f}\n"
+        text += f"Buyer: `{o['buyer_id']}` | Seller: `{o['seller_id']}`\n"
+        text += f"Status: `{o['status']}`\n\n"
+
+        buttons.append([
+            InlineKeyboardButton("✅ Refund Buyer", callback_data=f"admin_refund:{oid}"),
+            InlineKeyboardButton("💰 Pay Seller", callback_data=f"admin_release:{oid}")
+        ])
+
+    buttons.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+
+    await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def admin_refund(update, context, order_id):
+    q = update.callback_query
+    storage.update_order_status(order_id, "cancelled")
+
+    o = storage.get_order(order_id)
+    storage.update_balance(o["buyer_id"], o["amount"])
+
+    await context.bot.send_message(o["buyer_id"], f"✅ Admin refunded your purchase of *{o['item']}*")
+    await context.bot.send_message(o["seller_id"], f"⚠️ Your buyer was refunded for *{o['item']}*")
+
+    await q.edit_message_text("✅ Buyer refunded, order cancelled",
+                              parse_mode=ParseMode.MARKDOWN,
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]))
+
+
+async def admin_release(update, context, order_id):
+    q = update.callback_query
+    storage.update_order_status(order_id, "released")
+
+    o = storage.get_order(order_id)
+    storage.update_balance(o["seller_id"], o["amount"])
+
+    await context.bot.send_message(o["buyer_id"], f"⚠️ Admin released funds to seller for *{o['item']}*")
+    await context.bot.send_message(o["seller_id"], f"💰 Funds released to you for *{o['item']}*")
+
+    await q.edit_message_text("💰 Seller paid",
+                              parse_mode=ParseMode.MARKDOWN,
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]))

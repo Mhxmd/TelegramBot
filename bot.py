@@ -30,6 +30,8 @@ from telegram.ext import (
     filters,
 )
 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
 # our modules
 from modules import storage, ui, chat, seller, notifications
 import modules.wallet_utils as wallet
@@ -198,6 +200,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "noop":
             pass
 
+        # ---------- Admin ---------- #
+        elif data == "admin:disputes":
+            return await ui.admin_open_disputes(update, context)
+
+        elif data.startswith("admin_refund:"):
+            _, oid = data.split(":")
+            return await ui.admin_refund(update, context, oid)
+
+        elif data.startswith("admin_release:"):
+            _, oid = data.split(":")
+            return await ui.admin_release(update, context, oid)
+
+
     except Exception as e:
         logger.exception("Callback error")
         try:
@@ -205,6 +220,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+       
 
 # ==========================
 # MESSAGE HANDLER

@@ -121,6 +121,24 @@ def add_seller_product(seller_id: int, title: str, price: float, desc: str):
     save_json(SELLER_PRODUCTS_FILE, data)
     return sku
 
+def get_all_disputed_orders():
+    data = load_json(ORDERS_FILE)
+    disputes = {}
+    for user, orders in data.items():
+        for o in orders:
+            if o.get("status") == "disputed":
+                disputes[o["id"]] = o
+    return disputes
+
+def get_order(order_id):
+    data = load_json(ORDERS_FILE)
+    for user, orders in data.items():
+        for o in orders:
+            if o["id"] == order_id:
+                return o
+    return None
+
+
 # Chats
 def get_thread(thread_id: str):
     return load_json(MESSAGES_FILE).get(thread_id)
