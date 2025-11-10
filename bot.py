@@ -30,16 +30,14 @@ from telegram.ext import (
     filters,
 )
 
+# --- Load env FIRST so getenv works for both BOT_TOKEN and ADMIN_ID ---
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # our modules
-from modules import storage, ui, chat, seller, notifications
-import modules.wallet_utils as wallet
-
-
-# load env
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+from modules import storage, ui, chat, seller, notifications  # noqa: E402
+import modules.wallet_utils as wallet  # noqa: E402
 
 # logging
 logging.basicConfig(
@@ -54,23 +52,31 @@ logger = logging.getLogger("marketbot")
 # ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # deliver any pending messages
-    pending = storage.get_pending_notifications(user_id)
-    if pending:
-        for note in pending:
-            try:
-                await update.message.reply_text(note, parse_mode="Markdown")
-            except Exception:
-                pass
-        storage.clear_pending_notifications(user_id)
-   
+
+    # Deliver any pending notifications (e.g., reminders sent while user was offline)
+    if hasattr(storage, "get_pending_notifications"):
+        try:
+            pending = storage.get_pending_notifications(user_id)
+            if pending:
+                for note in pending:
+                    try:
+                        await update.message.reply_text(note, parse_mode="Markdown")
+                    except Exception:
+                        pass
+                storage.clear_pending_notifications(user_id)
+        except Exception:
+            # don't block start on inbox errors
+            pass
 
     # anti-spam
     if storage.is_spamming(user_id):
         return
 
     # ensure user wallet exists (solana)
-    wallet.ensure_user_wallet(user_id)
+    try:
+        wallet.ensure_user_wallet(user_id)
+    except Exception as e:
+        logger.warning(f"Wallet init failed for {user_id}: {e}")
 
     # show main menu
     bal = storage.get_balance(user_id)
@@ -91,144 +97,157 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
-    data = q.data or ""
+    data = (q.data or "").strip()
+
+    # Always acknowledge quickly to avoid “loading spinner” hanging
+    try:
+        await q.answer()
+    except Exception:
+        pass
 
     try:
         # ---------- MENUS ----------
         if data.startswith("menu:"):
             await ui.on_menu(update, context)
+            return
 
         # ---------- SHOP FLOW ----------
-        elif data.startswith("buy:"):
+        if data.startswith("buy:"):
             _, sku, qty = data.split(":")
             await ui.on_buy(update, context, sku, int(qty))
+            return
 
-        elif data.startswith("qty:"):
+        if data.startswith("qty:"):
             _, sku, qty = data.split(":")
             await ui.on_qty(update, context, sku, int(qty))
+            return
 
-        elif data.startswith("paynow_sim_success:"):
-            _, name, qty = data.split(":")
-            await update.callback_query.edit_message_text(
-                f"✅ *Payment simulated for {name} x{qty}*\nSeller will verify shortly.",
-                parse_mode="Markdown"
-            )
-        
-        elif data.startswith("payconfirm:"):
-            order_id = data.split(":")[1]
-            from modules.ui import handle_pay_confirm
-            await handle_pay_confirm(update, context, order_id)
+        if data.startswith("checkout:"):
+            _, sku, qty = data.split(":")
+            await ui.on_checkout(update, context, sku, int(qty))
+            return
 
-        elif data.startswith("paycancel:"):
-            order_id = data.split(":")[1]
-            from modules.ui import handle_pay_cancel
-            await handle_pay_cancel(update, context, order_id)
-
-
-        elif data.startswith("stripe:"):
+        if data.startswith("stripe:"):
             _, sku, qty = data.split(":")
             await ui.create_stripe_checkout(update, context, sku, int(qty))
+            return
 
-        elif data.startswith("paynow:"):
+        if data.startswith("paynow:"):
             _, sku, qty = data.split(":")
             await ui.show_paynow(update, context, sku, int(qty))
+            return
 
-        elif data.startswith("ship:"):
-            _, order_id = data.split(":")
-            from modules.ui import handle_mark_shipped
-            await handle_mark_shipped(update, context, order_id)
+        # Simulated return buttons from fake gateway
+        if data.startswith("payconfirm:"):
+            order_id = data.split(":", 1)[1]
+            from modules.ui import handle_pay_confirm
+            await handle_pay_confirm(update, context, order_id)
+            return
 
-        elif data.startswith("release:"):
-            _, order_id = data.split(":")
-            from modules.ui import handle_release_payment
-            await handle_release_payment(update, context, order_id)
+        if data.startswith("paycancel:"):
+            order_id = data.split(":", 1)[1]
+            from modules.ui import handle_pay_cancel
+            await handle_pay_cancel(update, context, order_id)
+            return
 
-        elif data.startswith("dispute:"):
-            _, order_id = data.split(":")
-            from modules.ui import handle_dispute_case
-            await handle_dispute_case(update, context, order_id)
-
-
-        elif data == "back_to_shop":
+        if data == "back_to_shop":
             text, kb = ui.build_shop_keyboard()
             await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            return
 
         # ---------- SELLER ----------
-        elif data.startswith("sell:list"):
+        if data.startswith("sell:list"):
             await seller.show_seller_listings(update, context)
+            return
 
-        elif data.startswith("sell:remove_confirm:"):
+        if data.startswith("sell:remove_confirm:"):
             _, _, sku = data.split(":")
             await seller.confirm_remove_listing(update, context, sku)
+            return
 
-        elif data.startswith("sell:remove_do:"):
+        if data.startswith("sell:remove_do:"):
             _, _, sku = data.split(":")
             await seller.do_remove_listing(update, context, sku)
-        
+            return
+
         # ---------- CHAT ----------
-        elif data.startswith("contact:"):
-            # buyer taps "Contact Seller"
+        if data.startswith("contact:"):
             _, sku, seller_id = data.split(":")
             await chat.on_contact_seller(update, context, sku, int(seller_id))
+            return
 
-        elif data.startswith("chat:open:"):
+        if data.startswith("chat:open:"):
             _, _, thread_id = data.split(":")
             await chat.on_chat_open(update, context, thread_id)
+            return
 
-        elif data == "chat:exit":
+        if data == "chat:exit":
             await chat.on_chat_exit(update, context)
+            return
 
         # ---------- PUBLIC CHAT ----------
-        elif data == "chat:public_open":
+        if data == "chat:public_open":
             await chat.on_public_chat_open(update, context)
+            return
 
         # ---------- WALLET ----------
-        elif data == "wallet:show_sol":
+        if data == "wallet:show_sol":
             await wallet.show_sol_address(update, context)
+            return
 
-        elif data == "wallet:withdraw":
+        if data == "wallet:withdraw":
             await wallet.start_withdraw_flow(update, context)
+            return
 
-        elif data == "wallet:deposit":
+        if data == "wallet:deposit":
             await wallet.show_deposit_info(update, context)
+            return
 
         # ---------- FUNCTIONS / HELP ----------
-        elif data == "menu:functions":
+        if data == "menu:functions":
             await ui.show_functions_menu(update, context)
+            return
 
-        elif data == "noop":
-            pass
+        if data == "noop":
+            return
 
-        # ---------- Admin ---------- #
-        elif data == "admin:disputes":
-            return await ui.admin_open_disputes(update, context)
+        # ---------- ADMIN (escrow/disputes) ----------
+        if data == "admin:disputes":
+            await ui.admin_open_disputes(update, context)
+            return
 
-        elif data.startswith("admin_refund:"):
+        if data.startswith("admin_refund:"):
             _, oid = data.split(":")
-            return await ui.admin_refund(update, context, oid)
+            await ui.admin_refund(update, context, oid)
+            return
 
-        elif data.startswith("admin_release:"):
+        if data.startswith("admin_release:"):
             _, oid = data.split(":")
-            return await ui.admin_release(update, context, oid)
+            await ui.admin_release(update, context, oid)
+            return
 
+        # Fallback
+        logger.info(f"Unhandled callback data: {data}")
 
     except Exception as e:
         logger.exception("Callback error")
+        # IMPORTANT: If the original message was a photo/caption,
+        # edit_message_text will 400. ui.* handlers try to handle that.
+        # Here we fall back to sending a new message to avoid hard failures.
         try:
             await q.edit_message_text(f"⚠️ Error: {e}\nPlease /start again.")
         except Exception:
-            pass
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_user.id,
+                    text=f"⚠️ Error: {e}\nPlease /start again."
+                )
+            except Exception:
+                pass
 
-       
 
 # ==========================
 # MESSAGE HANDLER
-# routes:
-# - active private chat
-# - active public chat
-# - seller add listing flow
-# - wallet withdraw flow
 # ==========================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -236,29 +255,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (msg.text or "").strip()
     uid = user.id
 
-    # 1) if user is in PUBLIC CHAT
+    # 1) Public chat
     if chat.is_in_public_chat(uid):
         await chat.handle_public_message(update, context, text)
         return
 
-    # 2) if user is in PRIVATE THREAD
+    # 2) Private thread
     if chat.is_in_private_thread(uid):
         await chat.handle_private_message(update, context, text)
         return
 
-    # 3) if user is in SELLER FLOW
+    # 3) Seller flow
     if seller.is_in_seller_flow(uid):
         await seller.handle_seller_flow(update, context, text)
         return
 
-    # 4) if user is in WITHDRAW flow
+    # 4) Wallet withdraw flow
     if wallet.is_in_withdraw_flow(uid):
         await wallet.handle_withdraw_flow(update, context, text)
         return
 
-    # 5) otherwise tell them to open menu
+    # 5) Otherwise prompt menu
     if text.lower() not in ("/start", "/shop"):
         await msg.reply_text("Type /start to open the menu.")
+
+
+# ==========================
+# ASYNC ERROR HANDLER (PTB v21 needs coroutine)
+# ==========================
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        logger.error("Unhandled error", exc_info=context.error)
+    except Exception:
+        pass
 
 
 # ==========================
@@ -281,8 +310,8 @@ def main():
     # text messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # errors
-    app.add_error_handler(lambda u, c: logger.error(c.error))
+    # errors (must be async)
+    app.add_error_handler(on_error)
 
     print("🤖 Marketplace Bot running — Ctrl+C to stop")
     app.run_polling()

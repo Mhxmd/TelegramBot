@@ -234,14 +234,25 @@ async def show_paynow(update, context, sku: str, qty: int):
 
 
 # ---------------- MENU ROUTER ----------------
+# ---------------- MENU ROUTER ----------------
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     _, tab = q.data.split(":", 1)
     uid = update.effective_user.id
 
+    # universal safe editor (supports photo captions)
+    async def safe_edit(text, kb):
+        try:
+            return await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        except:
+            try:
+                return await q.edit_message_caption(text, reply_markup=kb, parse_mode="Markdown")
+            except:
+                return await context.bot.send_message(chat_id=uid, text=text, reply_markup=kb, parse_mode="Markdown")
+
     if tab == "shop":
         txt, kb = build_shop_keyboard()
-        return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+        return await safe_edit(txt, kb)
 
     if tab == "wallet":
         bal = storage.get_balance(uid)
@@ -251,26 +262,24 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📤 Withdraw", callback_data="wallet:withdraw")],
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
         ])
-        return await q.edit_message_text(
-            f"💼 *Wallet*\nFiat: ${bal:.2f}\nSolana: `{pub}`\n", parse_mode="Markdown", reply_markup=kb
-        )
+        return await safe_edit(f"💼 *Wallet*\nFiat: ${bal:.2f}\nSolana: `{pub}`\n", kb)
 
     if tab == "messages":
         threads = storage.load_json(storage.MESSAGES_FILE)
         btns = [[InlineKeyboardButton(f"💬 {v['product']['name']}", callback_data=f"chat:open:{k}")]
                 for k, v in threads.items() if uid in (v.get("buyer_id"), v.get("seller_id"))]
         btns.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
-        msg = "💌 *Your Chats*:\n" if len(btns) > 1 else "No chats yet."
-        return await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
+        txt = "💌 *Your Chats*:\n" if len(btns) > 1 else "No chats yet."
+        return await safe_edit(txt, InlineKeyboardMarkup(btns))
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
-        return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+        return await safe_edit(txt, kb)
 
     if tab in ("main", "refresh"):
         kb, txt = build_main_menu(storage.get_balance(uid))
-        return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
-    
+        return await safe_edit(txt, kb)
+
     # ===========================
 # SHOP BUY / QTY / CHECKOUT
 # ===========================
@@ -470,9 +479,6 @@ import modules.storage as storage
 import os
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-if update.effective_user.id == ADMIN_ID:
-    buttons.append([InlineKeyboardButton("⚠️ Admin Disputes", callback_data="admin:disputes")])
 
 
 async def admin_open_disputes(update, context):
