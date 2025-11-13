@@ -10,6 +10,8 @@ SELLER_PRODUCTS_FILE = "seller_products.json"
 MESSAGES_FILE = "messages.json"
 WALLETS_FILE = "wallets.json"
 NOTIFICATIONS_FILE = "notifications.json"
+CARTS_FILE = "carts.json"
+
 
 # In-memory runtime data
 last_message_time: dict[int, float] = {}
@@ -30,6 +32,10 @@ for path, default in [
     if not os.path.exists(path):
         with open(path, "w") as f:
             json.dump(default, f, indent=2)
+
+    if not os.path.exists(CARTS_FILE):
+        with open(CARTS_FILE, "w") as f:
+            json.dump({}, f, indent=2)
 
 # JSON utils
 def load_json(path: str):
@@ -100,6 +106,52 @@ def set_role(user_id: int, role: str):
     roles = load_json(ROLES_FILE)
     roles[str(user_id)] = role
     save_json(ROLES_FILE, roles)
+
+#Cart Helpers
+def _load_carts():
+    return load_json(CARTS_FILE)
+
+def _save_carts(data):
+    save_json(CARTS_FILE, data)
+
+def get_cart(user_id: int) -> dict:
+    data = _load_carts()
+    return data.get(str(user_id), {})
+
+def cart_add(user_id: int, sku: str, qty: int = 1):
+    data = _load_carts()
+    uid = str(user_id)
+    cart = data.get(uid, {})
+    cart[sku] = int(cart.get(sku, 0)) + int(qty)
+    if cart[sku] <= 0:
+        cart.pop(sku, None)
+    data[uid] = cart
+    _save_carts(data)
+
+def cart_change(user_id: int, sku: str, delta: int):
+    data = _load_carts()
+    uid = str(user_id)
+    cart = data.get(uid, {})
+    if sku not in cart:
+        cart[sku] = 0
+    cart[sku] += int(delta)
+    if cart[sku] <= 0:
+        cart.pop(sku, None)
+    data[uid] = cart
+    _save_carts(data)
+
+def cart_remove(user_id: int, sku: str):
+    data = _load_carts()
+    uid = str(user_id)
+    cart = data.get(uid, {})
+    cart.pop(sku, None)
+    data[uid] = cart
+    _save_carts(data)
+
+def cart_clear(user_id: int):
+    data = _load_carts()
+    data[str(user_id)] = {}
+    _save_carts(data)
 
 # Seller Products
 def list_seller_products(seller_id: int):
