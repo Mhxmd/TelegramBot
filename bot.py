@@ -120,7 +120,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("paynow:"):
             _, sku, qty = data.split(":")
-            await ui.show_paynow(update, context, sku, int(qty))
+            await ui.Fpaynow(update, context, sku, int(qty))
             return
 
         if data == "back_to_shop":
