@@ -332,6 +332,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -------------------------------
     elif tab == "orders":
         text, kb = ui.build_orders_menu(uid)
+    
 
     # -------------------------------
     # MORE MENU
@@ -362,6 +363,34 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=kb,
                 parse_mode="Markdown"
             )
+
+#--Show Orders---#
+ async def show_orders(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    orders = storage.load_json(storage.ORDERS_FILE)
+    user_orders = [o for o in orders.values() if o["buyer_id"] == uid or o["seller_id"] == uid]
+
+    if not user_orders:
+        return await q.edit_message_text(
+            "📦 *You have no orders yet.*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
+        )
+
+    buttons = []
+    text = "📦 *Your Orders*\n\n"
+
+    for order in user_orders:
+        oid = order["order_id"]
+        text += f"• `{oid}` — {order['item']} — *{order['status']}*\n"
+        buttons.append([InlineKeyboardButton(f"View {oid}", callback_data=f'order_view:{oid}')])
+
+    buttons.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
 
 # ---------------- Buy / Qty ----------------
 async def on_buy(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
