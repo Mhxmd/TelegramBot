@@ -1,6 +1,0 @@
-python-telegram-bot==21.4
-python-dotenv
-qrcode
-pillow
-stripe
-requests
