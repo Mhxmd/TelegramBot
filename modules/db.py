@@ -453,3 +453,30 @@ async def create_payment(order_id: int, mode: str, amount: float, tx_hash=None):
             INSERT INTO payment (order_id,payment_mode,amount,transaction_hash)
             VALUES ($1,$2,$3,$4)
         """, order_id, mode, amount, tx_hash)
+
+# Order Creation 
+
+async def create_single_product_order(buyer_id: int, product_id: int):
+    async with pool.acquire() as conn:
+        product = await conn.fetchrow(
+            "SELECT * FROM product WHERE product_id=$1",
+            product_id
+        )
+
+        seller_id = product["seller_id"]
+        price = float(product["price"])
+
+        order = await conn.fetchrow("""
+            INSERT INTO orders (buyer_id, seller_id, total_amount, order_status)
+            VALUES ($1,$2,$3,'escrow_hold')
+            RETURNING *
+        """, buyer_id, seller_id, price)
+
+        oid = order["order_id"]
+
+        await conn.execute("""
+            INSERT INTO order_items (order_id, product_id, quantity, price_each, subtotal)
+            VALUES ($1,$2,1,$3,$3)
+        """, oid, product_id, price)
+
+        return dict(order)
