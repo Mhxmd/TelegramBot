@@ -1,7 +1,7 @@
 """
 ui.py – FULL SQL UI Layer
 Works with db.py (PostgreSQL only)
-No JSON at all.
+No JSON anywhere.
 """
 
 import os
@@ -16,7 +16,6 @@ from telegram import (
     InputFile,
     Update,
 )
-from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from modules import db
@@ -34,7 +33,7 @@ VERCEL_PAY_URL = "https://fake-paynow-yourname.vercel.app"
 
 
 # =====================================
-# PAYNOW GENERATOR (dummy Singapore QR)
+# PAYNOW QR GENERATOR
 # =====================================
 def generate_paynow_qr(amount: float, order_id: int):
     url = VERCEL_PAY_URL + "?" + urlencode({
@@ -51,38 +50,45 @@ def generate_paynow_qr(amount: float, order_id: int):
 
 
 # =====================================
-# MAIN MENU
+# ROLE-AWARE MAIN MENU (used by bot.py)
 # =====================================
 
-async def build_main_menu(uid: int):
-    wallet = await db.get_or_create_wallet(uid)
-    balance = float(wallet["balance"])
-
-    user = await db.get_user(uid)
-    role = user["role"]
-    verified = user["verification_status"]
-
+def build_role_main_menu(role: str, balance: float, verification_status: bool):
     text = (
         "👋 *Marketplace Dashboard*\n\n"
         f"💰 Balance: *${balance:.2f}*\n"
         f"🧩 Role: `{role}`\n"
-        f"🔒 Verified: {'Yes' if verified else 'No'}\n"
+        f"🔒 Verified: {'Yes' if verification_status else 'No'}\n"
     )
 
     rows = [
         [InlineKeyboardButton("🛍 Browse", callback_data="menu:shop")],
         [InlineKeyboardButton("🛒 Cart", callback_data="menu:cart")],
         [InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet")],
+        [InlineKeyboardButton("📬 Orders", callback_data="menu:orders")],
     ]
 
     if role == "seller":
         rows.append([InlineKeyboardButton("📦 My Products", callback_data="seller:products")])
         rows.append([InlineKeyboardButton("➕ Add Product", callback_data="seller:add")])
 
-    rows.append([InlineKeyboardButton("📬 Orders", callback_data="menu:orders")])
-
     kb = InlineKeyboardMarkup(rows)
     return text, kb
+
+
+# =====================================
+# OLD ASYNC MAIN MENU (internal use for /menu:main)
+# =====================================
+
+async def build_main_menu(uid: int):
+    user = await db.get_user(uid)
+    wallet = await db.get_or_create_wallet(uid)
+
+    role = user["role"]
+    verified = user["verification_status"]
+    balance = float(wallet["balance"])
+
+    return build_role_main_menu(role, balance, verified)
 
 
 # =====================================
@@ -125,16 +131,17 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def build_shop():
     items = await db.list_products()
-    lines = []
     rows = []
+    lines = []
 
     for p in items:
         pid = p["product_id"]
         price = float(p["price"])
+
         lines.append(f"• *{p['title']}* — ${price:.2f}")
 
         rows.append([
-            InlineKeyboardButton(f"View", callback_data=f"product:view:{pid}"),
+            InlineKeyboardButton("View", callback_data=f"product:view:{pid}"),
             InlineKeyboardButton("🛒 Add", callback_data=f"cart:add:{pid}"),
         ])
 
@@ -150,12 +157,14 @@ async def build_shop():
 
 async def show_product(update, context, pid: int):
     q = update.callback_query
-    product, images = await db.get_product(pid)
+    result = await db.get_product(pid)
 
-    if not product:
+    if not result:
         return await q.answer("Item not found", show_alert=True)
 
-    txt = (
+    product, images = result
+
+    text = (
         f"🧺 *{product['title']}*\n\n"
         f"{product['description']}\n\n"
         f"💵 Price: *${float(product['price']):.2f}*\n"
@@ -167,16 +176,21 @@ async def show_product(update, context, pid: int):
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")]
     ])
 
-    if len(images) == 0:
-        return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+    if not images:
+        return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
 
-    # Show product image
-    img = images[0]["image_url"]
-    await q.message.reply_photo(img, caption=txt, parse_mode="Markdown", reply_markup=kb)
+    image_url = images[0]["image_url"]
+
+    return await q.message.reply_photo(
+        photo=image_url,
+        caption=text,
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
 
 
 # =====================================
-# CART VIEW + ACTIONS
+# CART
 # =====================================
 
 async def build_cart(uid: int):
@@ -184,7 +198,7 @@ async def build_cart(uid: int):
 
     if not items:
         return (
-            "🛒 *Your cart is empty.*",
+            "🛒 *Your cart is empty*",
             InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
         )
 
@@ -195,42 +209,35 @@ async def build_cart(uid: int):
         pid = it["product_id"]
         qty = it["quantity"]
         price = float(it["price"])
-        subtotal = qty * price
 
-        lines.append(f"• *{it['title']}* ×{qty} — ${subtotal:.2f}")
+        lines.append(f"• *{it['title']}* × {qty} — ${price * qty:.2f}")
 
         rows.append([
             InlineKeyboardButton("➖", callback_data=f"cart:dec:{pid}"),
             InlineKeyboardButton(f"{qty}", callback_data="noop"),
-            InlineKeyboardButton("➕", callback_data=f"cart:inc:{pid}")
+            InlineKeyboardButton("➕", callback_data=f"cart:inc:{pid}"),
         ])
-        rows.append([
-            InlineKeyboardButton("❌ Remove", callback_data=f"cart:remove:{pid}")
-        ])
+
+        rows.append([InlineKeyboardButton("❌ Remove", callback_data=f"cart:remove:{pid}")])
 
     rows.append([InlineKeyboardButton("💳 Checkout", callback_data="cart:checkout")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
-    txt = "🛒 *Your Cart*\n\n" + "\n".join(lines)
-    return txt, InlineKeyboardMarkup(rows)
+    return "🛒 *Your Cart*\n\n" + "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 async def cart_handler(update, context, action, pid=None):
     uid = update.effective_user.id
 
-    if action == "add":
+    if action in ("add", "inc"):
         await db.cart_add(uid, int(pid), 1)
-
-    elif action == "inc":
-        await db.cart_add(uid, int(pid), 1)
-
     elif action == "dec":
         await db.cart_add(uid, int(pid), -1)
-
     elif action == "remove":
         await db.cart_remove(uid, int(pid))
 
     text, kb = await build_cart(uid)
+
     q = update.callback_query
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
 
@@ -245,25 +252,21 @@ async def cart_checkout(update, context):
 
     items = await db.cart_get(uid)
     if not items:
-        return await q.answer("Your cart is empty", show_alert=True)
+        return await q.answer("Cart is empty", show_alert=True)
 
-    rows = []
-    total = 0
+    total = sum(float(i["price"]) * i["quantity"] for i in items)
 
-    for it in items:
-        total += float(it["price"]) * it["quantity"]
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇸🇬 PayNow", callback_data="pay:paynow")],
+        [InlineKeyboardButton("💳 Stripe", callback_data="pay:stripe")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
+    ])
 
-    txt = (
-        "💳 *Checkout*\n"
-        f"Total: *${total:.2f}*\n\n"
-        "Choose payment method:"
+    await q.edit_message_text(
+        f"💳 *Checkout*\nTotal: *${total:.2f}*\nChoose payment method:",
+        parse_mode="Markdown",
+        reply_markup=kb
     )
-
-    rows.append([InlineKeyboardButton("🇸🇬 PayNow", callback_data="pay:paynow")])
-    rows.append([InlineKeyboardButton("💳 Stripe", callback_data="pay:stripe")])
-    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
-
-    await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
 
 
 # =====================================
@@ -273,15 +276,15 @@ async def cart_checkout(update, context):
 async def paynow_checkout(update, context):
     q = update.callback_query
     uid = update.effective_user.id
-    items = await db.cart_get(uid)
 
+    items = await db.cart_get(uid)
     total = sum(float(i["price"]) * i["quantity"] for i in items)
 
     qr, payload = generate_paynow_qr(total, order_id=99999)
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ I HAVE PAID", callback_data="pay:confirm")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
     ])
 
     await q.message.reply_photo(
@@ -299,8 +302,8 @@ async def paynow_checkout(update, context):
 async def stripe_checkout(update, context):
     q = update.callback_query
     uid = update.effective_user.id
-    items = await db.cart_get(uid)
 
+    items = await db.cart_get(uid)
     total = sum(float(i["price"]) * i["quantity"] for i in items)
     total_cents = int(total * 100)
 
@@ -320,10 +323,12 @@ async def stripe_checkout(update, context):
             cancel_url="https://example.com/cancel",
         )
     except Exception as e:
-        return await q.edit_message_text(f"Stripe Error: `{e}`", parse_mode="Markdown")
+        return await q.edit_message_text(f"Stripe error: `{e}`", parse_mode="Markdown")
 
-    txt = f"💳 *Stripe Payment*\nClick link below:\n{session.url}"
-    await q.edit_message_text(txt, parse_mode="Markdown")
+    await q.edit_message_text(
+        f"💳 *Stripe Payment*\nClick to pay:\n{session.url}",
+        parse_mode="Markdown"
+    )
 
 
 # =====================================
@@ -333,26 +338,27 @@ async def stripe_checkout(update, context):
 async def build_orders(uid: int):
     async with db.pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT * FROM orders 
+            SELECT * FROM orders
             WHERE buyer_id=$1 OR seller_id=$1
             ORDER BY order_id DESC
         """, uid)
 
     if not rows:
-        return "📦 No orders yet.", InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
-        ])
-
-    lines = []
-    for o in rows:
-        lines.append(
-            f"• Order `{o['order_id']}` — Status: *{o['order_status']}* — ${o['amount']:.2f}"
+        return (
+            "📦 *No orders yet.*",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
         )
+
+    lines = [
+        f"• Order `{o['order_id']}` — *{o['order_status']}* — ${float(o['amount']):.2f}"
+        for o in rows
+    ]
 
     txt = "📦 *Your Orders*\n\n" + "\n".join(lines)
 
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
-    return txt, kb
+    return txt, InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
+    ])
 
 
 # =====================================
@@ -361,8 +367,9 @@ async def build_orders(uid: int):
 
 async def build_wallet(uid: int):
     wallet = await db.get_or_create_wallet(uid)
+
     text = (
-        f"💼 *Wallet*\n"
+        "💼 *Wallet*\n\n"
         f"Balance: *${float(wallet['balance']):.2f}*\n"
         f"Solana Address:\n`{wallet['solana_address']}`"
     )

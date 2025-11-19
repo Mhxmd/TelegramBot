@@ -107,13 +107,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     balance = wallet_row.get("balance", 0.0)
 
     # --- NEW: role-aware v2 main menu (ERD marketplace) ---
-    text, kb = ui.build_role_main_menu(
-        role=role,
-        balance=balance,
-        verification_status=verified,
-    )
+    text, kb = await ui.build_main_menu(user_row["user_id"])
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
-
 
 async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
