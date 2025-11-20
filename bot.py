@@ -1,7 +1,6 @@
 # ============================================================
-# TELEGRAM MARKETPLACE BOT – V2 (FULL SQL ONLY)
-# Clean version — NO JSON SHOP, NO LEGACY CART, NO LEGACY CHAT
-# Everything uses: db.py + ui.py (ERD Marketplace)
+# TELEGRAM MARKETPLACE BOT – V2 (SQL ONLY)
+# Clean version: DB init BEFORE polling, modular DB + modular UI
 # ============================================================
 
 import os
@@ -17,17 +16,22 @@ from telegram.ext import (
     filters,
 )
 
-# Load .env
+# ------------------------------------------------------------
+# Environment
+# ------------------------------------------------------------
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or "0")
 
-# Import SQL modules
-from modules import ui
-import modules.db as db
+# ------------------------------------------------------------
+# Modules
+# ------------------------------------------------------------
+from modules import db        # all DB functions (users, wallet, orders, etc.)
+from modules import ui        # UI builders (menus, cards, etc.)
 
+# ------------------------------------------------------------
 # Logging
+# ------------------------------------------------------------
 logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     level=logging.INFO,
@@ -46,7 +50,7 @@ def _uid(update: Update) -> int:
 async def safe_edit(q, text, kb=None):
     try:
         await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-    except:
+    except Exception:
         await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
 
@@ -58,17 +62,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = _uid(update)
     username = update.effective_user.username or f"user_{uid}"
 
-    # Create user + wallet
+    # Create user & wallet
     user_row = await db.get_or_create_user(uid, username)
-    wallet_row = await db.get_or_create_wallet(user_row["user_id"])
+    await db.get_or_create_wallet(user_row["user_id"])
 
-    # Build main menu
+    # Build UI
     text, kb = await ui.build_main_menu(user_row["user_id"])
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
 
 # ============================================================
-# SQL UI Handlers
+# UI ROUTES
 # ============================================================
 
 async def handle_main(update, context, q):
@@ -81,7 +85,8 @@ async def handle_main(update, context, q):
 async def handle_categories(update, context, q):
     cats = await db.get_all_categories()
     if not cats:
-        return await safe_edit(q, "❌ No categories.")
+        return await safe_edit(q, "❌ No categories available.")
+
     text, kb = ui.build_category_menu([c["category_name"] for c in cats])
     await safe_edit(q, text, kb)
 
@@ -89,12 +94,14 @@ async def handle_categories(update, context, q):
 async def handle_category_page(update, context, q, category, page):
     uid = _uid(update)
     total = await db.count_products_by_category(category)
+
     if total == 0:
         return await safe_edit(q, f"❌ No products in `{category}`")
 
     size = 1
     total_pages = max((total + size - 1) // size, 1)
 
+    # wrap-around pagination
     if page < 1:
         page = total_pages
     if page > total_pages:
@@ -105,7 +112,6 @@ async def handle_category_page(update, context, q, category, page):
 
     card = ui.build_product_photo_card(product, page, total_pages)
 
-    # Replace message with photo
     await context.bot.send_photo(
         chat_id=uid,
         photo=card["photo_url"],
@@ -118,6 +124,7 @@ async def handle_category_page(update, context, q, category, page):
 async def handle_product(update, context, q, pid):
     uid = _uid(update)
     product = await db.get_product_by_id(pid)
+
     if not product:
         return await safe_edit(q, "❌ Product not found.")
 
@@ -142,17 +149,14 @@ async def handle_cart_add(update, context, q, pid, qty):
 async def handle_orders(update, context, q, page=1):
     uid = _uid(update)
     user = await db.get_user_by_telegram_id(uid)
-    uid_sql = user["user_id"]
 
-    total = await db.count_orders_by_buyer(uid_sql)
+    total = await db.count_orders_by_buyer(user["user_id"])
     size = 5
     total_pages = max((total + size - 1) // size, 1)
 
-    orders = await db.get_orders_by_buyer_paginated(uid_sql, page, size)
+    orders = await db.get_orders_by_buyer_paginated(user["user_id"], page, size)
+    text, kb = ui.build_orders_list(orders, "buyer", page, total_pages)
 
-    text, kb = ui.build_orders_list(
-        orders, "buyer", page, total_pages
-    )
     await safe_edit(q, text, kb)
 
 
@@ -171,10 +175,10 @@ async def handle_order_view(update, context, q, oid, role):
 
 async def handle_wallet(update, context, q):
     uid = _uid(update)
-    user_row = await db.get_user_by_telegram_id(uid)
-    wallet_row = await db.get_or_create_wallet(user_row["user_id"])
+    user = await db.get_user_by_telegram_id(uid)
+    wallet = await db.get_or_create_wallet(user["user_id"])
 
-    text, kb = ui.build_wallet_dashboard(wallet_row, user_row)
+    text, kb = ui.build_wallet_dashboard(wallet, user)
     await safe_edit(q, text, kb)
 
 
@@ -186,36 +190,31 @@ async def handle_admin(update, context, q):
     text, kb = ui.build_admin_panel_menu()
     await safe_edit(q, text, kb)
 
-# Checkout handler
-async def start_checkout(update, context, q, product_id):
+
+async def start_checkout(update, context, q, pid):
     uid = _uid(update)
     user = await db.get_user_by_telegram_id(uid)
 
-    # Create a SINGLE-PRODUCT order (full cart checkout is different)
-    order = await db.create_single_product_order(
-        buyer_id=user["user_id"],
-        product_id=product_id
-    )
-
+    order = await db.create_single_product_order(user["user_id"], pid)
     text, kb = ui.build_payment_method_menu(order["order_id"], order["total_amount"])
+
     await safe_edit(q, text, kb)
 
 
-
 # ============================================================
-# CALLBACK ROUTER (SQL ONLY)
+# CALLBACK ROUTER
 # ============================================================
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    data = q.data.strip()
+    data = q.data
 
     try:
         await q.answer()
-    except:
+    except Exception:
         pass
 
-    # MAIN MENU
+    # MAIN
     if data == "v2:menu:main":
         return await handle_main(update, context, q)
 
@@ -223,7 +222,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:shop:categories":
         return await handle_categories(update, context, q)
 
-    # CATEGORY SELECT
     if data.startswith("v2:shop:cat:"):
         _, _, _, category = data.split(":", 3)
         return await handle_category_page(update, context, q, category, 1)
@@ -238,7 +236,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, _, _, pid = data.split(":", 3)
         return await handle_product(update, context, q, int(pid))
 
-    # ADD TO CART
+    # CART
     if data.startswith("v2:cart:add:"):
         _, _, _, pid, qty = data.split(":", 4)
         return await handle_cart_add(update, context, q, int(pid), int(qty))
@@ -260,47 +258,28 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data in ("v2:wallet:dashboard", "v2:wallet:refresh"):
         return await handle_wallet(update, context, q)
 
-    # Checkout
+    # CHECKOUT
     if data.startswith("v2:checkout:"):
         _, _, pid = data.split(":")
         return await start_checkout(update, context, q, int(pid))
-
 
     # ADMIN
     if data == "v2:admin:panel":
         return await handle_admin(update, context, q)
 
-    return logger.info(f"Unhandled callback: {data}")
+    logger.info(f"Unhandled callback: {data}")
 
 
 # ============================================================
-# MESSAGE HANDLER (Minimal)
+# MESSAGE HANDLER
 # ============================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Use /start to open the marketplace.")
 
-# Payment Handler
-
-async def handle_paynow(update, context, q, oid):
-    order = await db.get_order_by_id(oid)
-    amt = order["total_amount"]
-
-    text, kb = ui.build_paynow_qr(oid, amt)
-    await safe_edit(q, text, kb)
-
 
 # ============================================================
-# STARTUP
-# ============================================================
-
-async def on_startup(app):
-    await db.init_db()
-    logger.info("Database initialised.")
-
-
-# ============================================================
-# MAIN
+# MAIN (WINDOWS SAFE VERSION)
 # ============================================================
 
 def main():
@@ -308,19 +287,32 @@ def main():
         print("❌ BOT_TOKEN missing in .env")
         return
 
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .post_init(on_startup)
-        .build()
-    )
+    async def setup():
+        # Init DB BEFORE polling
+        await db.init_db()
+        logger.info("Database initialised.")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        app = (
+            ApplicationBuilder()
+            .token(BOT_TOKEN)
+            .build()
+        )
 
-    print("🤖 Marketplace Bot v2 (SQL ONLY) — Running")
-    app.run_polling()
+        # Handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(callback_router))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+        print("🤖 Marketplace Bot — Running")
+        return app
+
+    # Create loop manually (Windows-safe)
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    app = loop.run_until_complete(setup())
+    app.run_polling()   # NO await, runs in same thread safely
 
 
 if __name__ == "__main__":
