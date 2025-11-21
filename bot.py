@@ -1,12 +1,18 @@
 # ============================================================
-# TELEGRAM MARKETPLACE BOT – V2 (SQL ONLY) — FIXED VERSION
-# Fully synced with new ui.py (single-file UI)
+# TELEGRAM MARKETPLACE BOT – V2 (SQL ONLY)
+# Fully synced with ui.py (single-file UI) + db.py (Railway)
+# Includes: Admin Panel, Seller Panel, Category Browsing, Checkout
 # ============================================================
 
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -48,7 +54,7 @@ def _uid(update: Update) -> int:
 
 
 async def safe_edit(q, text, kb=None):
-    """Edits message safely, fallback to send new msg."""
+    """Edits message safely, fallback to sending new msg."""
     try:
         await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
     except Exception:
@@ -63,11 +69,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = _uid(update)
     username = update.effective_user.username or f"user_{uid}"
 
-    # Ensure user + wallet exist
+    # ensure user exists
     user_row = await db.get_or_create_user(uid, username)
     await db.get_or_create_wallet(user_row["user_id"])
 
-    # Show main menu
+    # show main menu
     text, kb = await ui.build_main_menu(user_row["user_id"])
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
@@ -84,7 +90,7 @@ async def handle_main(update, context, q):
 
 
 # ============================================================
-# CATEGORY MENU
+# SHOP — Categories
 # ============================================================
 
 async def handle_categories(update, context, q):
@@ -96,18 +102,21 @@ async def handle_categories(update, context, q):
     await safe_edit(q, text, kb)
 
 
+# ============================================================
+# SHOP — Category Page
+# ============================================================
+
 async def handle_category_page(update, context, q, category_name, page):
     uid = _uid(update)
 
-    # Count total products
     total_products = await db.count_products_by_category(category_name)
     if total_products == 0:
         return await safe_edit(q, f"❌ No products in `{category_name}`")
 
-    # Pagination
     size = 1
     total_pages = max((total_products + size - 1) // size, 1)
 
+    # wrap pagination
     if page < 1:
         page = total_pages
     if page > total_pages:
@@ -148,9 +157,8 @@ async def handle_product(update, context, q, pid):
         parse_mode="Markdown",
     )
 
-
 # ============================================================
-# CART
+# CART — Add to Cart
 # ============================================================
 
 async def handle_cart_add(update, context, q, pid, qty):
@@ -161,7 +169,19 @@ async def handle_cart_add(update, context, q, pid, qty):
 
 
 # ============================================================
-# ORDERS
+# CART — View Cart
+# ============================================================
+
+async def handle_cart_view(update, context, q):
+    uid = _uid(update)
+    user = await db.get_user_by_telegram_id(uid)
+
+    text, kb = await ui.build_cart_view(user["user_id"])
+    await safe_edit(q, text, kb)
+
+
+# ============================================================
+# ORDERS — List
 # ============================================================
 
 async def handle_orders(update, context, q, page=1):
@@ -178,15 +198,17 @@ async def handle_orders(update, context, q, page=1):
     await safe_edit(q, text, kb)
 
 
+# ============================================================
+# ORDER VIEW — Detailed
+# ============================================================
+
 async def handle_order_view(update, context, q, oid, role):
     order = await db.get_order_by_id(oid)
     if not order:
         return await safe_edit(q, "❌ Order not found.")
 
-    # First item only (single-product orders)
-    item = order["items"][0]
+    item = order["items"][0]  # single-item for now
     product = await db.get_product_by_id(item["product_id"])
-
     buyer = await db.get_user_by_id(order["buyer_id"])
     seller = await db.get_user_by_id(order["seller_id"])
 
@@ -208,20 +230,7 @@ async def handle_wallet(update, context, q):
 
 
 # ============================================================
-# ADMIN
-# ============================================================
-
-async def handle_admin(update, context, q):
-    uid = _uid(update)
-    if uid != ADMIN_ID:
-        return await q.answer("🚫 Admin only", show_alert=True)
-
-    text, kb = ui.build_admin_panel_menu()
-    await safe_edit(q, text, kb)
-
-
-# ============================================================
-# CHECKOUT
+# CHECKOUT (Single Product)
 # ============================================================
 
 async def start_checkout(update, context, q, pid):
@@ -233,14 +242,32 @@ async def start_checkout(update, context, q, pid):
 
     await safe_edit(q, text, kb)
 
+
 # ============================================================
-# Admin
+# CHECKOUT (From Cart)
+# ============================================================
+
+async def start_checkout_cart(update, context, q):
+    uid = _uid(update)
+    user = await db.get_user_by_telegram_id(uid)
+
+    order = await db.create_order_from_cart(user["user_id"])
+    if not order:
+        return await safe_edit(q, "🛒 Your cart is empty.")
+
+    text, kb = ui.build_payment_method_menu(order["order_id"], order["total_amount"])
+    await safe_edit(q, text, kb)
+
+
+# ============================================================
+# ADMIN — USERS
 # ============================================================
 
 async def handle_admin_users(update, context, q, page):
     size = 6
     total = await db.admin_count_users()
     total_pages = max((total + size - 1) // size, 1)
+
     users = await db.admin_get_users_paginated(page, size)
     text, kb = await ui.build_admin_user_list(users, page, total_pages)
     return await safe_edit(q, text, kb)
@@ -253,10 +280,15 @@ async def handle_admin_user_view(update, context, q, uid):
     return await safe_edit(q, text, kb)
 
 
+# ============================================================
+# ADMIN — PRODUCTS
+# ============================================================
+
 async def handle_admin_products(update, context, q, page):
     size = 6
     total = await db.admin_count_products()
     total_pages = max((total + size - 1) // size, 1)
+
     products = await db.admin_get_products_paginated(page, size)
     text, kb = ui.build_admin_product_list(products, page, total_pages)
     return await safe_edit(q, text, kb)
@@ -265,6 +297,7 @@ async def handle_admin_products(update, context, q, page):
 async def handle_admin_product_view(update, context, q, pid):
     product = await db.get_product_by_id(pid)
     card = ui.build_admin_product_view(product)
+
     await context.bot.send_photo(
         chat_id=_uid(update),
         photo=card["photo_url"],
@@ -273,9 +306,127 @@ async def handle_admin_product_view(update, context, q, pid):
         parse_mode="Markdown",
     )
 
+# ============================================================
+# SELLER PANEL
+# ============================================================
+
+async def handle_seller_dashboard(update, context, q):
+    text, kb = ui.build_seller_dashboard()
+    await safe_edit(q, text, kb)
+
+
+async def handle_seller_products(update, context, q):
+    uid = _uid(update)
+    user = await db.get_user_by_telegram_id(uid)
+
+    products = await db.get_seller_products(user["user_id"])
+    text, kb = ui.build_seller_product_list(products)
+    await safe_edit(q, text, kb)
+
+
+async def handle_seller_product_view(update, context, q, pid):
+    product = await db.get_product_by_id(pid)
+    card = ui.build_seller_product_card(product)
+
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=card["photo_url"],
+        caption=card["text"],
+        reply_markup=card["reply_markup"],
+        parse_mode="Markdown",
+    )
+
+
+async def handle_seller_delete_product(update, context, q, pid):
+    await db.seller_delete_product(pid)
+    await safe_edit(
+        q,
+        "❌ Product deleted.",
+        ui.build_seller_after_delete_menu()
+    )
+
 
 # ============================================================
-# CALLBACK ROUTER
+# ADD PRODUCT FLOW (Seller)
+# ============================================================
+
+async def handle_add_product_text(update, context):
+    """Handles user text for adding new product (multi-step form)."""
+    uid = update.effective_user.id
+
+    if "addprod" not in context.user_data:
+        return await update.message.reply_text("Use the menu to add a product.")
+
+    step = context.user_data["addprod"]["step"]
+    data = context.user_data["addprod"]
+
+    # ------------------ Step 1: Title ------------------
+    if step == 1:
+        data["title"] = update.message.text
+        data["step"] = 2
+        return await update.message.reply_text(
+            "📝 Enter product *description*:",
+            parse_mode="Markdown"
+        )
+
+    # ------------------ Step 2: Description ------------------
+    if step == 2:
+        data["desc"] = update.message.text
+        data["step"] = 3
+        return await update.message.reply_text(
+            "💵 Enter *price* (numbers only):",
+            parse_mode="Markdown"
+        )
+
+    # ------------------ Step 3: Price ------------------
+    if step == 3:
+        try:
+            data["price"] = float(update.message.text)
+        except:
+            return await update.message.reply_text("❌ Invalid price. Try again.")
+        data["step"] = 4
+        return await update.message.reply_text("📦 Enter *stock quantity*:")
+
+    # ------------------ Step 4: Quantity ------------------
+    if step == 4:
+        try:
+            data["qty"] = int(update.message.text)
+        except:
+            return await update.message.reply_text("❌ Invalid quantity. Try again.")
+        data["step"] = 5
+        return await update.message.reply_text(
+            "🏷 Enter *category ID* (number):",
+            parse_mode="Markdown"
+        )
+
+    # ------------------ Step 5: Category ------------------
+    if step == 5:
+        try:
+            data["category_id"] = int(update.message.text)
+        except:
+            return await update.message.reply_text("❌ Invalid category ID.")
+        
+        # Create product
+        user = await db.get_user_by_telegram_id(uid)
+        new_prod = await db.create_product(
+            user["user_id"],
+            data["title"],
+            data["desc"],
+            data["price"],
+            data["qty"],
+            data["category_id"]
+        )
+
+        context.user_data.pop("addprod")
+        return await update.message.reply_text(
+            f"✅ Product *{new_prod['title']}* created!\n"
+            "You can now add images via seller panel.",
+            parse_mode="Markdown"
+        )
+
+
+# ============================================================
+# CALLBACK ROUTER (COMPLETE + CLEAN)
 # ============================================================
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -291,26 +442,32 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:menu:main":
         return await handle_main(update, context, q)
 
-    # ---------- SHOP ----------
+    # ---------- CATEGORY / SHOP ----------
     if data == "v2:shop:categories":
         return await handle_categories(update, context, q)
 
     if data.startswith("v2:shop:cat:"):
-        category = data.split(":", 3)[3]
-        return await handle_category_page(update, context, q, category, 1)
+        cat = data.split(":", 3)[3]
+        return await handle_category_page(update, context, q, cat, 1)
 
     if data.startswith("v2:shop:page:"):
-        _, _, _, category, page = data.split(":", 4)
-        return await handle_category_page(update, context, q, category, int(page))
+        _, _, _, cat, page = data.split(":")
+        return await handle_category_page(update, context, q, cat, int(page))
 
     if data.startswith("v2:shop:product:"):
         pid = int(data.split(":")[3])
         return await handle_product(update, context, q, pid)
 
     # ---------- CART ----------
+    if data == "v2:cart:view":
+        return await handle_cart_view(update, context, q)
+
     if data.startswith("v2:cart:add:"):
         _, _, _, pid, qty = data.split(":")
         return await handle_cart_add(update, context, q, int(pid), int(qty))
+
+    if data == "v2:checkout_cart":
+        return await start_checkout_cart(update, context, q)
 
     # ---------- ORDERS ----------
     if data == "v2:buyer:orders":
@@ -320,7 +477,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data.split(":")[3])
         return await handle_orders(update, context, q, page)
 
-    # ---------- ORDER VIEW ----------
     if data.startswith("v2:order:view:"):
         _, _, _, oid, role = data.split(":")
         return await handle_order_view(update, context, q, int(oid), role)
@@ -334,78 +490,87 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pid = int(data.split(":")[2])
         return await start_checkout(update, context, q, pid)
 
-    # ---------- ADMIN ----------
-        # --------------------
-    # ADMIN PANEL
-    # --------------------
+    # ============================================================
+    # SELLER PANEL ROUTES
+    # ============================================================
+
+    if data == "v2:seller:dashboard":
+        return await handle_seller_dashboard(update, context, q)
+
+    if data == "v2:seller:products":
+        return await handle_seller_products(update, context, q)
+
+    if data.startswith("v2:seller:view:"):
+        pid = int(data.split(":")[3])
+        return await handle_seller_product_view(update, context, q, pid)
+
+    if data.startswith("v2:seller:delete:"):
+        pid = int(data.split(":")[3])
+        return await handle_seller_delete_product(update, context, q, pid)
+
+    if data == "v2:seller:add":
+        context.user_data["addprod"] = {"step": 1}
+        return await safe_edit(q, *ui.build_add_product_prompt(1))
+
+    # ============================================================
+    # ADMIN ROUTES
+    # ============================================================
+
     if data == "v2:admin:panel":
         return await handle_admin(update, context, q)
 
-    if data == "v2:admin:stats":
-        stats = await db.admin_get_stats()
-        text, kb = ui.build_admin_stats(stats)
-        return await safe_edit(q, text, kb)
-
-    # USERS
     if data == "v2:admin:users":
         return await handle_admin_users(update, context, q, 1)
 
     if data.startswith("v2:admin:users_page:"):
-        _, _, _, page = data.split(":")
-        return await handle_admin_users(update, context, q, int(page))
+        page = int(data.split(":")[3])
+        return await handle_admin_users(update, context, q, page)
 
     if data.startswith("v2:admin:user_view:"):
-        _, _, _, uid = data.split(":")
-        return await handle_admin_user_view(update, context, q, int(uid))
+        uid = int(data.split(":")[3])
+        return await handle_admin_user_view(update, context, q, uid)
 
     if data.startswith("v2:admin:user_promote:"):
-        _, _, _, uid = data.split(":")
-        await db.admin_promote_user(int(uid))
+        uid = int(data.split(":")[3])
+        await db.admin_promote_user(uid)
         await q.answer("Promoted ✔️")
-        return await handle_admin_user_view(update, context, q, int(uid))
+        return await handle_admin_user_view(update, context, q, uid)
 
     if data.startswith("v2:admin:user_demote:"):
-        _, _, _, uid = data.split(":")
-        await db.admin_demote_user(int(uid))
+        uid = int(data.split(":")[3])
+        await db.admin_demote_user(uid)
         await q.answer("Demoted ✔️")
-        return await handle_admin_user_view(update, context, q, int(uid))
+        return await handle_admin_user_view(update, context, q, uid)
 
-    # WALLET ACTIONS
     if data.startswith("v2:admin:wallet_lock:"):
-        _, _, _, uid = data.split(":")
-        await db.admin_lock_wallet(int(uid))
+        uid = int(data.split(":")[3])
+        await db.admin_lock_wallet(uid)
         await q.answer("Wallet locked 🔒")
-        return await handle_admin_user_view(update, context, q, int(uid))
+        return await handle_admin_user_view(update, context, q, uid)
 
     if data.startswith("v2:admin:wallet_unlock:"):
-        _, _, _, uid = data.split(":")
-        await db.admin_unlock_wallet(int(uid))
+        uid = int(data.split(":")[3])
+        await db.admin_unlock_wallet(uid)
         await q.answer("Wallet unlocked 🔓")
-        return await handle_admin_user_view(update, context, q, int(uid))
+        return await handle_admin_user_view(update, context, q, uid)
 
     # PRODUCTS
     if data == "v2:admin:products":
         return await handle_admin_products(update, context, q, 1)
 
     if data.startswith("v2:admin:products_page:"):
-        _, _, _, page = data.split(":")
-        return await handle_admin_products(update, context, q, int(page))
+        page = int(data.split(":")[3])
+        return await handle_admin_products(update, context, q, page)
 
     if data.startswith("v2:admin:product_view:"):
-        _, _, _, pid = data.split(":")
-        return await handle_admin_product_view(update, context, q, int(pid))
+        pid = int(data.split(":")[3])
+        return await handle_admin_product_view(update, context, q, pid)
 
     if data.startswith("v2:admin:product_delete:"):
-        _, _, _, pid = data.split(":")
-        await db.admin_delete_product(int(pid))
+        pid = int(data.split(":")[3])
+        await db.admin_delete_product(pid)
         await q.answer("Deleted ✔️")
         return await handle_admin_products(update, context, q, 1)
-
-    # DISPUTES
-    if data == "v2:admin:disputes":
-        disputes = await db.admin_get_disputes()
-        text, kb = ui.build_admin_dispute_list(disputes)
-        return await safe_edit(q, text, kb)
 
 
 # ============================================================
@@ -413,7 +578,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Use /start to open the marketplace.")
+    return await handle_add_product_text(update, context)
 
 
 # ============================================================

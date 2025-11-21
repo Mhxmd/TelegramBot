@@ -414,6 +414,34 @@ async def get_orders_by_buyer_paginated(buyer_id: int, page: int, size: int):
         return [dict(r) for r in rows]
 
 
+
+# ============================================================
+# Get seller orders
+# ============================================================
+
+async def get_seller_orders(seller_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT * FROM orders
+            WHERE seller_id=$1
+            ORDER BY order_id DESC
+        """, seller_id)
+
+        return [dict(r) for r in rows]
+
+# ============================================================
+# Delete Products (Soft delete, cache still there)
+# ============================================================
+
+async def seller_delete_product(pid: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE product
+            SET status='deleted'
+            WHERE product_id=$1
+        """, pid)
+
+
 # ============================================================
 # PAYMENT
 # ============================================================
@@ -570,3 +598,4 @@ async def admin_get_disputes():
             ORDER BY dispute_id DESC
         """)
         return [dict(r) for r in rows]
+
