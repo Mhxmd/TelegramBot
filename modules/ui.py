@@ -1,6 +1,6 @@
 # ============================================================
-# modules/ui.py  —  FULL UI LAYER for Marketplace Bot V2
-# Compatible with bot.py v2 + db.py v2 + Railway PostgreSQL
+# modules/ui.py — UI LAYER for Marketplace V2
+# Dynamic Buyer/Seller/Admin Interface
 # ============================================================
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,15 +17,22 @@ async def build_main_menu(user_id: int):
 
     balance = float(wallet["balance"])
     role = user["role"]
-    verified = "Yes" if user["verification_status"] else "No"
+
+    # Determine if user is a seller (based on products they listed)
+    seller_products = await db.get_seller_products(user_id)
+    is_seller = len(seller_products) > 0
+
+    # Only show role if admin
+    role_line = f"🧩 Role: `{role}`\n" if role == "admin" else ""
 
     text = (
         "👋 *Marketplace Dashboard*\n\n"
         f"💰 Balance: *${balance:.2f}*\n"
-        f"🧩 Role: `{role}`\n"
-        f"🔒 Verified: {verified}\n"
+        f"{role_line}"
+        f"🔒 Verified: {'Yes' if user['verification_status'] else 'No'}\n"
     )
 
+    # Base menu
     kb = [
         [InlineKeyboardButton("🛍 Shop", callback_data="v2:shop:categories")],
         [InlineKeyboardButton("🛒 View Cart", callback_data="v2:cart:view")],
@@ -33,10 +40,14 @@ async def build_main_menu(user_id: int):
         [InlineKeyboardButton("💼 Wallet", callback_data="v2:wallet:dashboard")],
     ]
 
-    if role == "seller":
+    # Seller section
+    if is_seller:
         kb.append([InlineKeyboardButton("📦 My Products", callback_data="v2:seller:products")])
         kb.append([InlineKeyboardButton("➕ Add Product", callback_data="v2:seller:add")])
+    else:
+        kb.append([InlineKeyboardButton("📦 Become a Seller", callback_data="v2:seller:become")])
 
+    # Admin UI
     if role == "admin":
         kb.append([InlineKeyboardButton("🛠 Admin Panel", callback_data="v2:admin:panel")])
 
@@ -68,13 +79,12 @@ def build_category_menu(categories: list):
 def build_product_photo_card(product, page, total_pages):
     pid = product["product_id"]
     title = product["title"]
-    desc = product.get("description", "")
     price = float(product["price"])
+    desc = product.get("description", "")
     stock = product["stock_quantity"]
     category = product.get("category_name", "Unknown")
 
-    images = product.get("images", [])
-    image_url = images[0] if images else None
+    img = product["images"][0] if product.get("images") else None
 
     caption = (
         f"🧺 *{title}*\n"
@@ -95,11 +105,10 @@ def build_product_photo_card(product, page, total_pages):
     ]
 
     return {
-        "photo_url": image_url,
+        "photo_url": img,
         "caption": caption,
         "reply_markup": InlineKeyboardMarkup(kb)
     }
-
 
 # ============================================================
 # CART VIEW
@@ -107,7 +116,6 @@ def build_product_photo_card(product, page, total_pages):
 
 async def build_cart_view(user_id):
     items = await db.cart_get(user_id)
-
     if not items:
         return (
             "🛒 *Your cart is empty.*",
@@ -145,7 +153,6 @@ def build_orders_list(orders, for_role, page, total_pages):
         )
 
     txt = "📬 *Your Orders*\n\n"
-
     for o in orders:
         txt += (
             f"*Order #{o['order_id']}*\n"
@@ -194,7 +201,7 @@ def build_order_summary(order, product, buyer, seller, for_role):
 
 
 # ============================================================
-# CHECKOUT PAYMENT MENU
+# PAYMENT
 # ============================================================
 
 def build_payment_method_menu(order_id, amount):
@@ -220,7 +227,7 @@ def build_paynow_qr(order_id, amount):
         f"📱 *PayNow*\n\n"
         f"Order ID: `{order_id}`\n"
         f"Amount: *${amount:.2f}*\n\n"
-        "_This is a placeholder. In production, generate a SGQR._"
+        "_This is a placeholder SGQR._"
     )
 
     kb = [
@@ -232,7 +239,7 @@ def build_paynow_qr(order_id, amount):
 
 
 # ============================================================
-# WALLET DASHBOARD
+# WALLET
 # ============================================================
 
 def build_wallet_dashboard(wallet, user):
@@ -255,387 +262,249 @@ def build_wallet_dashboard(wallet, user):
 
 
 # ============================================================
-# ADMIN PANEL
+# SELLER PANEL
 # ============================================================
 
-def build_admin_panel_menu():
-    txt = "🛠 *Admin Panel*\nChoose an option:"
-
+def build_seller_dashboard():
+    txt = (
+        "📦 *Seller Dashboard*\n\n"
+        "Manage your products:"
+    )
     kb = [
-        [InlineKeyboardButton("📊 System Stats", callback_data="v2:admin:stats")],
-        [InlineKeyboardButton("🛍 Manage Products", callback_data="v2:admin:products")],
-        [InlineKeyboardButton("👥 Manage Users", callback_data="v2:admin:users")],
+        [InlineKeyboardButton("📦 My Products", callback_data="v2:seller:products")],
+        [InlineKeyboardButton("➕ Add Product", callback_data="v2:seller:add")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
     ]
-
     return txt, InlineKeyboardMarkup(kb)
 
-# ============================================================
-# SELLER — PRODUCT MANAGEMENT UI
-# ============================================================
 
-# -----------------------------------------
-# Seller: Product List
-# -----------------------------------------
-
-async def build_seller_products_list(user_id, products, page, total_pages):
+def build_seller_product_list(products):
     if not products:
         return (
-            "📦 *No products listed yet.*\nAdd your first product!",
+            "📦 *You haven't listed any products yet.*",
             InlineKeyboardMarkup([
                 [InlineKeyboardButton("➕ Add Product", callback_data="v2:seller:add")],
-                [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")]
+                [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
             ])
         )
 
     txt = "📦 *Your Products*\n\n"
+    kb = []
+
     for p in products:
+        txt += f"• *{p['title']}* — ${float(p['price']):.2f}\n"
+        kb.append([InlineKeyboardButton(f"View {p['title']}", callback_data=f"v2:seller:view:{p['product_id']}")])
+
+    kb.append([InlineKeyboardButton("➕ Add Product", callback_data="v2:seller:add")])
+    kb.append([InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")])
+
+    return txt, InlineKeyboardMarkup(kb)
+
+
+def build_seller_product_card(product):
+    img = product["images"][0] if product["images"] else None
+
+    caption = (
+        f"📦 *{product['title']}*\n"
+        f"💵 Price: *${float(product['price']):.2f}*\n"
+        f"📦 Stock: `{product['stock_quantity']}`\n\n"
+        f"{product['description']}"
+    )
+
+    kb = [
+        [InlineKeyboardButton("✏ Edit Title", callback_data=f"v2:seller:edit_title:{product['product_id']}")],
+        [InlineKeyboardButton("📝 Edit Description", callback_data=f"v2:seller:edit_desc:{product['product_id']}")],
+        [InlineKeyboardButton("💰 Edit Price", callback_data=f"v2:seller:edit_price:{product['product_id']}")],
+        [InlineKeyboardButton("📦 Edit Stock", callback_data=f"v2:seller:edit_stock:{product['product_id']}")],
+        [InlineKeyboardButton("🗑 Delete Product", callback_data=f"v2:seller:delete:{product['product_id']}")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:seller:products")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
+    ]
+
+    return {
+        "photo_url": img,
+        "text": caption,
+        "reply_markup": InlineKeyboardMarkup(kb)
+    }
+
+
+def build_seller_after_delete_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 My Products", callback_data="v2:seller:products")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
+    ])
+
+# ============================================================
+# ADMIN PANEL UI
+# ============================================================
+
+def build_admin_panel_menu():
+    txt = "🛠 *Admin Panel*\nChoose an option:"
+    kb = [
+        [InlineKeyboardButton("📊 Stats", callback_data="v2:admin:stats")],
+        [InlineKeyboardButton("👥 Users", callback_data="v2:admin:users")],
+        [InlineKeyboardButton("🛍 Products", callback_data="v2:admin:products")],
+        [InlineKeyboardButton("⚖ Disputes", callback_data="v2:admin:disputes")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
+    ]
+    return txt, InlineKeyboardMarkup(kb)
+
+
+# ============================================================
+# ADMIN — STATS
+# ============================================================
+
+def build_admin_stats(stats):
+    txt = (
+        "📊 *System Statistics*\n\n"
+        f"👥 Users: *{stats['user_count']}*\n"
+        f"🛍 Products: *{stats['product_count']}*\n"
+        f"📦 Orders: *{stats['order_count']}*\n"
+        f"💸 Payments: *{stats['payment_count']}*\n"
+        f"⚖ Disputes: *{stats['dispute_count']}*\n"
+    )
+    kb = [
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:panel")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")]
+    ]
+    return txt, InlineKeyboardMarkup(kb)
+
+
+# ============================================================
+# ADMIN — USER LIST
+# ============================================================
+
+async def build_admin_user_list(users, page, total_pages):
+    txt = "👥 *All Users*\n\n"
+    for u in users:
         txt += (
-            f"*{p['title']}*\n"
-            f"Price: *${float(p['price']):.2f}*\n"
-            f"Stock: `{p['stock_quantity']}`\n"
-            f"/ ID: `{p['product_id']}`\n\n"
+            f"• @{u['username']} — `{u['role']}`\n"
+            f"ID: `{u['user_id']}`\n\n"
         )
 
     txt += f"Page {page}/{total_pages}"
 
     kb = [
         [
-            InlineKeyboardButton("⬅️ Prev", callback_data=f"v2:seller:products_page:{page-1}"),
-            InlineKeyboardButton("➡️ Next", callback_data=f"v2:seller:products_page:{page+1}")
+            InlineKeyboardButton("⬅ Prev", callback_data=f"v2:admin:users_page:{page-1}"),
+            InlineKeyboardButton("➡ Next", callback_data=f"v2:admin:users_page:{page+1}")
         ],
-        [InlineKeyboardButton("➕ Add Product", callback_data="v2:seller:add")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Product Detail View
-# -----------------------------------------
-
-def build_seller_product_page(product):
-    pid = product["product_id"]
-    title = product["title"]
-    price = float(product["price"])
-    stock = product["stock_quantity"]
-    desc = product.get("description", "")
-
-    img = product["images"][0] if product["images"] else None
-
-    caption = (
-        f"📦 *{title}*\n"
-        f"💵 Price: *${price:.2f}*\n"
-        f"📦 Stock: `{stock}`\n\n"
-        f"{desc}"
-    )
-
-    kb = [
-        [InlineKeyboardButton("✏️ Edit Title", callback_data=f"v2:seller:edit_title:{pid}")],
-        [InlineKeyboardButton("📝 Edit Description", callback_data=f"v2:seller:edit_desc:{pid}")],
-        [InlineKeyboardButton("💰 Edit Price", callback_data=f"v2:seller:edit_price:{pid}")],
-        [InlineKeyboardButton("📦 Edit Stock", callback_data=f"v2:seller:edit_stock:{pid}")],
-        [InlineKeyboardButton("🗑 Delete Product", callback_data=f"v2:seller:delete:{pid}")],
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:seller:products")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
-    ]
-
-    return {
-        "photo_url": img,
-        "caption": caption,
-        "reply_markup": InlineKeyboardMarkup(kb)
-    }
-
-
-# -----------------------------------------
-# Seller — Edit Title (Prompt UI)
-# -----------------------------------------
-
-def prompt_edit_title(pid):
-    txt = (
-        f"✏️ *Edit Product Title*\n\n"
-        f"Product ID: `{pid}`\n"
-        "Send the *new title* below:"
-    )
-
-    kb = [
-        [InlineKeyboardButton("↩️ Cancel", callback_data=f"v2:seller:view:{pid}")]
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Edit Description
-# -----------------------------------------
-
-def prompt_edit_description(pid):
-    txt = (
-        f"📝 *Edit Description*\n\n"
-        f"Product ID: `{pid}`\n"
-        "Send the *new product description*:"
-    )
-
-    kb = [
-        [InlineKeyboardButton("↩️ Cancel", callback_data=f"v2:seller:view:{pid}")]
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Edit Price
-# -----------------------------------------
-
-def prompt_edit_price(pid):
-    txt = (
-        f"💰 *Edit Price*\n\n"
-        f"Product ID: `{pid}`\n"
-        "Send the *new price* (numbers only):"
-    )
-
-    kb = [
-        [InlineKeyboardButton("↩️ Cancel", callback_data=f"v2:seller:view:{pid}")]
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Edit Stock
-# -----------------------------------------
-
-def prompt_edit_stock(pid):
-    txt = (
-        f"📦 *Edit Stock Quantity*\n\n"
-        f"Product ID: `{pid}`\n"
-        "Send the *new stock quantity* (integer):"
-    )
-
-    kb = [
-        [InlineKeyboardButton("↩️ Cancel", callback_data=f"v2:seller:view:{pid}")]
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Delete Confirmation UI
-# -----------------------------------------
-
-def build_delete_confirmation(pid):
-    txt = (
-        f"⚠️ *Delete Product?*\n\n"
-        f"Product ID: `{pid}`\n"
-        "*This action is irreversible.*"
-    )
-
-    kb = [
-        [InlineKeyboardButton("🗑 Yes, Delete", callback_data=f"v2:seller:delete_confirm:{pid}")],
-        [InlineKeyboardButton("↩️ Cancel", callback_data=f"v2:seller:view:{pid}")],
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# Seller — Add Product (initial prompt)
-# -----------------------------------------
-
-def build_add_product_prompt():
-    txt = (
-        "➕ *Add New Product*\n\n"
-        "Send the *product title* to begin."
-    )
-
-    kb = [
-        [InlineKeyboardButton("🏠 Cancel", callback_data="v2:menu:main")]
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-# ============================================================
-# ADMIN — FULL UI PANEL
-# ============================================================
-
-# -----------------------------------------
-# ADMIN PANEL HOME
-# -----------------------------------------
-
-def build_admin_panel_menu():
-    txt = (
-        "🛠 *Admin Panel*\n\n"
-        "Choose a function:"
-    )
-    kb = [
-        [InlineKeyboardButton("📊 System Stats", callback_data="v2:admin:stats")],
-        [InlineKeyboardButton("👥 Manage Users", callback_data="v2:admin:users")],
-        [InlineKeyboardButton("🛍 Manage Products", callback_data="v2:admin:products")],
-        [InlineKeyboardButton("⚖️ View Disputes", callback_data="v2:admin:disputes")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
-    ]
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# ADMIN — SYSTEM STATS UI
-# -----------------------------------------
-
-def build_admin_stats(stats):
-    txt = (
-        "📊 *System Statistics*\n\n"
-        f"👥 Total Users: *{stats['user_count']}*\n"
-        f"🛍 Total Products: *{stats['product_count']}*\n"
-        f"📦 Total Orders: *{stats['order_count']}*\n"
-        f"💸 Total Payments: *{stats['payment_count']}*\n"
-        f"⚖️ Active Disputes: *{stats['dispute_count']}*\n"
-    )
-
-    kb = [
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:panel")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:panel")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")]
     ]
 
     return txt, InlineKeyboardMarkup(kb)
 
 
-# -----------------------------------------
-# ADMIN — USER LIST
-# -----------------------------------------
-
-async def build_admin_user_list(users, page, total_pages):
-    txt = "👥 *User List*\n\n"
-
-    for u in users:
-        txt += (
-            f"• @{u['username']} — `{u['role']}`\n"
-            f"/ ID: `{u['user_id']}`\n"
-            f"/admin user {u['user_id']}\n\n"
-        )
-
-    txt += f"Page {page}/{total_pages}"
-
-    kb = [
-        [
-            InlineKeyboardButton("⬅️ Prev", callback_data=f"v2:admin:users_page:{page-1}"),
-            InlineKeyboardButton("➡️ Next", callback_data=f"v2:admin:users_page:{page+1}")
-        ],
-        [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:panel")],
-    ]
-
-    return txt, InlineKeyboardMarkup(kb)
-
-
-# -----------------------------------------
-# ADMIN — VIEW USER DETAILS
-# -----------------------------------------
+# ============================================================
+# ADMIN — USER VIEW
+# ============================================================
 
 def build_admin_user_view(user, wallet):
     txt = (
-        f"👤 *User Details*\n\n"
+        f"👤 *User Info*\n\n"
         f"ID: `{user['user_id']}`\n"
         f"Username: @{user['username']}\n"
         f"Role: `{user['role']}`\n"
         f"Verified: `{user['verification_status']}`\n\n"
-        f"💼 Wallet:\n"
+        f"💼 *Wallet*\n"
         f"Balance: *${float(wallet['balance']):.2f}*\n"
         f"Status: `{wallet['status']}`\n"
-        f"Solana: `{wallet['solana_address']}`\n"
+        f"Solana: `{wallet['solana_address']}`"
     )
 
     kb = [
         [
             InlineKeyboardButton("⬆ Promote", callback_data=f"v2:admin:user_promote:{user['user_id']}"),
-            InlineKeyboardButton("⬇ Demote", callback_data=f"v2:admin:user_demote:{user['user_id']}")
+            InlineKeyboardButton("⬇ Demote", callback_data=f"v2:admin:user_demote:{user['user_id']}"),
         ],
         [
             InlineKeyboardButton("🔒 Lock Wallet", callback_data=f"v2:admin:wallet_lock:{user['user_id']}"),
-            InlineKeyboardButton("🔓 Unlock Wallet", callback_data=f"v2:admin:wallet_unlock:{user['user_id']}")
+            InlineKeyboardButton("🔓 Unlock Wallet", callback_data=f"v2:admin:wallet_unlock:{user['user_id']}"),
         ],
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:users")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:users")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
     ]
 
     return txt, InlineKeyboardMarkup(kb)
 
 
-# -----------------------------------------
+# ============================================================
 # ADMIN — PRODUCT LIST
-# -----------------------------------------
+# ============================================================
 
 def build_admin_product_list(products, page, total_pages):
     txt = "🛍 *All Products*\n\n"
-
     for p in products:
         txt += (
-            f"*{p['title']}* — ${float(p['price']):.2f}\n"
-            f"/product {p['product_id']}\n"
-            f"Seller ID: `{p['seller_id']}`\n\n"
+            f"• *{p['title']}* — ${float(p['price']):.2f}\n"
+            f"ID: `{p['product_id']}` | Seller `{p['seller_id']}`\n\n"
         )
 
     txt += f"Page {page}/{total_pages}"
 
     kb = [
         [
-            InlineKeyboardButton("⬅️ Prev", callback_data=f"v2:admin:products_page:{page-1}"),
-            InlineKeyboardButton("➡️ Next", callback_data=f"v2:admin:products_page:{page+1}")
+            InlineKeyboardButton("⬅ Prev", callback_data=f"v2:admin:products_page:{page-1}"),
+            InlineKeyboardButton("➡ Next", callback_data=f"v2:admin:products_page:{page+1}"),
         ],
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:panel")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:panel")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
     ]
 
     return txt, InlineKeyboardMarkup(kb)
 
 
-# -----------------------------------------
+# ============================================================
 # ADMIN — PRODUCT VIEW
-# -----------------------------------------
+# ============================================================
 
 def build_admin_product_view(product):
-    pid = product["product_id"]
     img = product["images"][0] if product["images"] else None
+    pid = product["product_id"]
 
     txt = (
-        f"🛍 *{product['title']}*\n\n"
-        f"Price: *${float(product['price']):.2f}*\n"
-        f"Stock: `{product['stock_quantity']}`\n"
-        f"Status: `{product['status']}`\n"
-        f"Seller ID: `{product['seller_id']}`\n\n"
+        f"🛍 *{product['title']}*\n"
+        f"💵 ${float(product['price']):.2f}\n"
+        f"📦 Stock `{product['stock_quantity']}`\n"
+        f"Seller `{product['seller_id']}`\n\n"
         f"{product['description']}"
     )
 
     kb = [
         [InlineKeyboardButton("🗑 Delete Product", callback_data=f"v2:admin:product_delete:{pid}")],
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:products")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:products")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
     ]
 
-    return {"photo_url": img, "caption": txt, "reply_markup": InlineKeyboardMarkup(kb)}
+    return {
+        "photo_url": img,
+        "caption": txt,
+        "reply_markup": InlineKeyboardMarkup(kb)
+    }
 
 
-# -----------------------------------------
-# ADMIN — DISPUTE LIST
-# -----------------------------------------
+# ============================================================
+# ADMIN — DISPUTES
+# ============================================================
 
 def build_admin_dispute_list(disputes):
     if not disputes:
         return (
-            "⚖️ *No active disputes.*",
-            InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Back", callback_data="v2:admin:panel")]])
+            "⚖ No active disputes.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data="v2:admin:panel")]])
         )
 
-    txt = "⚖️ *Active Disputes*\n\n"
+    txt = "⚖ *Active Disputes*\n\n"
     for d in disputes:
         txt += (
             f"• Dispute `{d['dispute_id']}` — Order `{d['order_id']}`\n"
-            f"Raised by: `{d['raised_by']}`\n"
+            f"Raised: `{d['raised_by']}`\n"
             f"Reason: {d['reason']}\n\n"
         )
 
     kb = [
-        [InlineKeyboardButton("↩️ Back", callback_data="v2:admin:panel")],
+        [InlineKeyboardButton("↩ Back", callback_data="v2:admin:panel")],
         [InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")],
     ]
 

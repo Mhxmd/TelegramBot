@@ -56,7 +56,8 @@ async def create_tables():
 
             IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname='order_status')
                 THEN CREATE TYPE order_status AS ENUM (
-                    'pending','processing','escrow_hold','shipped','delivered','completed','failed','refunded','disputed'
+                    'pending','processing','escrow_hold','shipped',
+                    'delivered','completed','failed','refunded','disputed'
                 ); END IF;
 
             IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname='payment_status')
@@ -76,16 +77,6 @@ async def create_tables():
             role user_role DEFAULT 'buyer',
             verification_status BOOLEAN DEFAULT FALSE,
             date_joined TIMESTAMP DEFAULT NOW()
-        );
-        """)
-
-        # ADMIN (optional linking) -----------------------------
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS admin (
-            admin_id SERIAL PRIMARY KEY,
-            user_id INTEGER UNIQUE REFERENCES users(user_id),
-            privileges TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
         );
         """)
 
@@ -292,7 +283,6 @@ async def get_products_by_category_paginated(category: str, page: int, size: int
             LIMIT $2 OFFSET $3
         """, category, size, offset)
 
-        # Load images
         result = []
         for r in rows:
             p = dict(r)
@@ -319,6 +309,10 @@ async def cart_add_item(user_id: int, pid: int, qty: int):
             DO UPDATE SET quantity = cart.quantity + EXCLUDED.quantity
         """, user_id, pid, qty)
 
+async def cart_clear(user_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM cart WHERE user_id=$1", user_id)
+
 
 async def cart_get(user_id: int):
     async with pool.acquire() as conn:
@@ -339,8 +333,7 @@ async def cart_get(user_id: int):
 async def create_single_product_order(buyer_id: int, product_id: int):
     async with pool.acquire() as conn:
         product = await conn.fetchrow(
-            "SELECT * FROM product WHERE product_id=$1",
-            product_id
+            "SELECT * FROM product WHERE product_id=$1", product_id
         )
         if not product:
             return None
@@ -348,7 +341,6 @@ async def create_single_product_order(buyer_id: int, product_id: int):
         seller_id = product["seller_id"]
         price = float(product["price"])
 
-        # decrement stock
         await conn.execute("""
             UPDATE product
             SET stock_quantity = stock_quantity - 1
@@ -414,9 +406,8 @@ async def get_orders_by_buyer_paginated(buyer_id: int, page: int, size: int):
         return [dict(r) for r in rows]
 
 
-
 # ============================================================
-# Get seller orders
+# SELLER INFO
 # ============================================================
 
 async def get_seller_orders(seller_id: int):
@@ -426,11 +417,34 @@ async def get_seller_orders(seller_id: int):
             WHERE seller_id=$1
             ORDER BY order_id DESC
         """, seller_id)
-
         return [dict(r) for r in rows]
 
+
+async def get_seller_products(user_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT p.*, 
+                   COALESCE(ARRAY_AGG(pi.image_url) FILTER (WHERE pi.image_url IS NOT NULL), '{}') AS images
+            FROM product p
+            LEFT JOIN product_images pi ON p.product_id = pi.product_id
+            WHERE p.seller_id = $1 AND p.status='active'
+            GROUP BY p.product_id
+            ORDER BY p.product_id DESC
+        """, user_id)
+        return [dict(r) for r in rows]
+
+
+
+async def promote_to_seller(user_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE users SET role='seller'
+            WHERE user_id=$1
+        """, user_id)
+
+
 # ============================================================
-# Delete Products (Soft delete, cache still there)
+# DELETE PRODUCTS (Soft Delete)
 # ============================================================
 
 async def seller_delete_product(pid: int):
@@ -453,34 +467,22 @@ async def create_payment(order_id: int, mode: str, amount: float, tx_hash=None):
             VALUES ($1,$2,$3,$4)
         """, order_id, mode, amount, tx_hash)
 
+
 # ============================================================
 # ADMIN FUNCTIONS
 # ============================================================
 
-# -------------------------------
-# SYSTEM STATS
-# -------------------------------
-
 async def admin_get_stats():
     async with pool.acquire() as conn:
-        user_count = await conn.fetchval("SELECT COUNT(*) FROM users")
-        product_count = await conn.fetchval("SELECT COUNT(*) FROM product")
-        order_count = await conn.fetchval("SELECT COUNT(*) FROM orders")
-        payment_count = await conn.fetchval("SELECT COUNT(*) FROM payment")
-        dispute_count = await conn.fetchval("SELECT COUNT(*) FROM dispute WHERE resolved_at IS NULL")
-
-        return {
-            "user_count": user_count,
-            "product_count": product_count,
-            "order_count": order_count,
-            "payment_count": payment_count,
-            "dispute_count": dispute_count
+        stats = {
+            "user_count": await conn.fetchval("SELECT COUNT(*) FROM users"),
+            "product_count": await conn.fetchval("SELECT COUNT(*) FROM product"),
+            "order_count": await conn.fetchval("SELECT COUNT(*) FROM orders"),
+            "payment_count": await conn.fetchval("SELECT COUNT(*) FROM payment"),
+            "dispute_count": 0  # remove dispute table for now
         }
+        return stats
 
-
-# -------------------------------
-# USERS
-# -------------------------------
 
 async def admin_count_users():
     async with pool.acquire() as conn:
@@ -500,12 +502,11 @@ async def admin_get_users_paginated(page: int, size: int):
 
 async def admin_promote_user(user_id: int):
     async with pool.acquire() as conn:
-        # buyer → seller, seller → admin (never beyond admin)
         await conn.execute("""
-            UPDATE users
-            SET role = CASE 
-                WHEN role = 'buyer' THEN 'seller'
-                WHEN role = 'seller' THEN 'admin'
+            UPDATE users SET role =
+            CASE 
+                WHEN role='buyer' THEN 'seller'
+                WHEN role='seller' THEN 'admin'
                 ELSE 'admin'
             END
             WHERE user_id=$1
@@ -514,41 +515,32 @@ async def admin_promote_user(user_id: int):
 
 async def admin_demote_user(user_id: int):
     async with pool.acquire() as conn:
-        # admin → seller, seller → buyer
         await conn.execute("""
-            UPDATE users
-            SET role = CASE
-                WHEN role = 'admin' THEN 'seller'
-                WHEN role = 'seller' THEN 'buyer'
+            UPDATE users SET role =
+            CASE 
+                WHEN role='admin' THEN 'seller'
+                WHEN role='seller' THEN 'buyer'
                 ELSE 'buyer'
             END
             WHERE user_id=$1
         """, user_id)
 
 
-# -------------------------------
-# WALLET CONTROL
-# -------------------------------
-
 async def admin_lock_wallet(user_id: int):
     async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE wallet SET status='locked'
-            WHERE user_id=$1
-        """, user_id)
+        await conn.execute(
+            "UPDATE wallet SET status='locked' WHERE user_id=$1",
+            user_id
+        )
 
 
 async def admin_unlock_wallet(user_id: int):
     async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE wallet SET status='active'
-            WHERE user_id=$1
-        """, user_id)
+        await conn.execute(
+            "UPDATE wallet SET status='active' WHERE user_id=$1",
+            user_id
+        )
 
-
-# -------------------------------
-# PRODUCTS
-# -------------------------------
 
 async def admin_count_products():
     async with pool.acquire() as conn:
@@ -566,7 +558,6 @@ async def admin_get_products_paginated(page: int, size: int):
 
         products = [dict(r) for r in rows]
 
-        # attach images
         for p in products:
             imgs = await conn.fetch("""
                 SELECT image_url FROM product_images
@@ -584,18 +575,3 @@ async def admin_delete_product(pid: int):
             UPDATE product SET status='deleted'
             WHERE product_id=$1
         """, pid)
-
-
-# -------------------------------
-# DISPUTES
-# -------------------------------
-
-async def admin_get_disputes():
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT * FROM dispute
-            WHERE resolved_at IS NULL
-            ORDER BY dispute_id DESC
-        """)
-        return [dict(r) for r in rows]
-

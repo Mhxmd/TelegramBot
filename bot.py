@@ -54,9 +54,20 @@ def _uid(update: Update) -> int:
 
 
 async def safe_edit(q, text, kb=None):
-    """Edits message safely, fallback to sending new msg."""
     try:
-        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        # If the original message had a photo → edit caption
+        if q.message.photo:
+            await q.edit_message_caption(
+                caption=text,
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+        else:
+            await q.edit_message_text(
+                text,
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
     except Exception:
         await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
@@ -262,6 +273,11 @@ async def start_checkout_cart(update, context, q):
 # ============================================================
 # ADMIN — USERS
 # ============================================================
+
+async def handle_admin(update, context, q):
+    text, kb = ui.build_admin_panel_menu()
+    await safe_edit(q, text, kb)
+
 
 async def handle_admin_users(update, context, q, page):
     size = 6
@@ -469,6 +485,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:checkout_cart":
         return await start_checkout_cart(update, context, q)
 
+    if data == "v2:cart:clear":
+        uid = _uid(update)
+        user = await db.get_user_by_telegram_id(uid)
+        await db.cart_clear(user["user_id"])
+        await q.answer("Cart cleared 🧹")
+        return await handle_cart_view(update, context, q)
+
+
     # ---------- ORDERS ----------
     if data == "v2:buyer:orders":
         return await handle_orders(update, context, q, 1)
@@ -497,6 +521,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:seller:dashboard":
         return await handle_seller_dashboard(update, context, q)
 
+    if data == "v2:seller:become":
+        uid = _uid(update)
+        user = await db.get_user_by_telegram_id(uid)
+
+    # Promote to seller
+    await db.promote_to_seller(user["user_id"])
+    await q.answer("🎉 You are now a seller!")
+
+    # Refresh menu
+    text, kb = await ui.build_main_menu(user["user_id"])
+    return await safe_edit(q, text, kb)
+
+
+
     if data == "v2:seller:products":
         return await handle_seller_products(update, context, q)
 
@@ -511,6 +549,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:seller:add":
         context.user_data["addprod"] = {"step": 1}
         return await safe_edit(q, *ui.build_add_product_prompt(1))
+
 
     # ============================================================
     # ADMIN ROUTES
