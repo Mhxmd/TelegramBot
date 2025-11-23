@@ -19,8 +19,9 @@ async def build_main_menu(user_id: int):
     role = user["role"]
 
     # Determine if user is a seller (based on products they listed)
-    seller_products = await db.get_seller_products(user_id)
-    is_seller = len(seller_products) > 0
+    # Determine role DIRECTLY
+    is_seller = user["role"] == "seller" or user["role"] == "admin"
+
 
     # Only show role if admin
     role_line = f"🧩 Role: `{role}`\n" if role == "admin" else ""

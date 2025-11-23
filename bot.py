@@ -54,22 +54,33 @@ def _uid(update: Update) -> int:
 
 
 async def safe_edit(q, text, kb=None):
+    """
+    Safe edit that never attempts to edit photo messages.
+    """
+
+    # If message contains photo, send new text message ALWAYS.
+    if q.message.photo:
+        return await q.message.reply_text(
+            text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+
+    # Try normal edit
     try:
-        # If the original message had a photo → edit caption
-        if q.message.photo:
-            await q.edit_message_caption(
-                caption=text,
-                reply_markup=kb,
-                parse_mode="Markdown"
-            )
-        else:
-            await q.edit_message_text(
-                text,
-                reply_markup=kb,
-                parse_mode="Markdown"
-            )
-    except Exception:
-        await q.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        return await q.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+    except:
+        # Fallback: send new message
+        return await q.message.reply_text(
+            text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+
 
 
 # ============================================================
@@ -525,17 +536,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # SELLER — Become Seller
 # ============================================================
 
+    # ---------- SELLER — Become Seller ----------
     if data == "v2:seller:become":
         uid = _uid(update)
         user = await db.get_user_by_telegram_id(uid)
 
     # Promote
-    await db.promote_to_seller(user["user_id"])
-    await q.answer("🎉 You are now a seller!")
+        await db.promote_to_seller(user["user_id"])
+        await q.answer("🎉 You are now a seller!")
 
-    # Refresh menu
-    text, kb = await ui.build_main_menu(user["user_id"])
-    return await safe_edit(q, text, kb)
+    # Refresh main menu (IMPORTANT: use reply, not edit)
+        text, kb = await ui.build_main_menu(user["user_id"])
+        return await safe_edit(q, text, kb)
+
 
 
     # ============================================================
