@@ -39,6 +39,8 @@ async def build_main_menu(user_id: int):
         [InlineKeyboardButton("🛒 View Cart", callback_data="v2:cart:view")],
         [InlineKeyboardButton("📬 Orders", callback_data="v2:buyer:orders")],
         [InlineKeyboardButton("💼 Wallet", callback_data="v2:wallet:dashboard")],
+        [InlineKeyboardButton("🌐 Browse All Products", callback_data="v2:feed:all:1")],
+
     ]
 
     # Seller section
@@ -71,6 +73,42 @@ def build_category_menu(categories: list):
         "🛍 *Shop Categories*\n\nChoose a category:",
         InlineKeyboardMarkup(rows)
     )
+
+# ============================================================
+# PUBLIC FEED (ALL PRODUCTS) / This is under categories
+# ============================================================
+
+def build_public_feed(products, page, total_pages):
+    if not products:
+        return (
+            "🌐 *No products available yet.*",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")]])
+        )
+
+    txt = "🌐 *All Products*\n\n"
+
+    kb = []
+
+    for p in products:
+        txt += (
+            f"• *{p['title']}* — ${float(p['price']):.2f}\n"
+            f"Seller `{p['seller_id']}`\n\n"
+        )
+        kb.append([InlineKeyboardButton(
+            f"View {p['title']}",
+            callback_data=f"v2:shop:product:{p['product_id']}"
+        )])
+
+    # Pagination
+    kb.append([
+        InlineKeyboardButton("⬅ Prev", callback_data=f"v2:feed:all:{page-1}"),
+        InlineKeyboardButton("➡ Next", callback_data=f"v2:feed:all:{page+1}")
+    ])
+
+    kb.append([InlineKeyboardButton("🏠 Menu", callback_data="v2:menu:main")])
+
+    return txt, InlineKeyboardMarkup(kb)
+
 
 
 # ============================================================

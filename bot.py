@@ -382,7 +382,7 @@ async def handle_add_product_text(update, context):
     uid = update.effective_user.id
 
     if "addprod" not in context.user_data:
-        return await update.message.reply_text("Use the menu to add a product.")
+        return 
 
     step = context.user_data["addprod"]["step"]
     data = context.user_data["addprod"]
@@ -469,6 +469,52 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:menu:main":
         return await handle_main(update, context, q)
 
+    # ------------------------------------------------------------
+    # SELLER — Add Product (Start Flow)
+    # ------------------------------------------------------------
+# --- SELLER: Add Product ---
+    if data == "v2:seller:add":
+        uid = _uid(update)
+        user = await db.get_user_by_telegram_id(uid)
+
+    # Start the multi-step add-product form
+        context.user_data["addprod"] = {
+            "step": 1,
+            "title": "",
+            "desc": "",
+            "price": 0,
+            "qty": 0,
+            "category_id": 0,
+        }
+
+        await safe_edit(
+        q,
+        "📝 Enter *product title*: ",
+        None
+        )
+        return
+
+
+
+    # ---------- PUBLIC FEED ----------
+    if data.startswith("v2:feed:all:"):
+        page = int(data.split(":")[3])
+
+        size = 5
+        total = await db.count_all_products()
+        total_pages = max((total + size - 1) // size, 1)
+
+        # wrap pagination
+        if page < 1:
+            page = total_pages
+        if page > total_pages:
+            page = 1
+
+        products = await db.get_all_products_paginated(page, size)
+        text, kb = ui.build_public_feed(products, page, total_pages)
+
+        return await safe_edit(q, text, kb)
+
     # ---------- CATEGORY / SHOP ----------
     if data == "v2:shop:categories":
         return await handle_categories(update, context, q)
@@ -515,6 +561,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("v2:order:view:"):
         _, _, _, oid, role = data.split(":")
         return await handle_order_view(update, context, q, int(oid), role)
+
+
 
     # ---------- WALLET ----------
     if data in ("v2:wallet:dashboard", "v2:wallet:refresh"):
