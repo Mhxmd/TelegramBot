@@ -410,6 +410,31 @@ async def get_orders_by_buyer_paginated(buyer_id: int, page: int, size: int):
 # SELLER INFO
 # ============================================================
 
+async def create_product(seller_id: int, title: str, desc: str, price: float, qty: int, category_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO product (seller_id, title, description, price, stock_quantity, category_id)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            RETURNING *
+        """, seller_id, title, desc, price, qty, category_id)
+
+        new_product = dict(row)
+        new_product["images"] = []  # no images yet
+        return new_product
+
+async def add_product_image(product_id: int, image_url: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO product_images (product_id, image_url, sort_order)
+            VALUES ($1, $2,
+                COALESCE(
+                    (SELECT MAX(sort_order)+1 FROM product_images WHERE product_id=$1),
+                    0
+                )
+            )
+        """, product_id, image_url)
+
+
 async def get_seller_orders(seller_id: int):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""

@@ -521,34 +521,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "v2:seller:dashboard":
         return await handle_seller_dashboard(update, context, q)
 
+# ============================================================
+# SELLER — Become Seller
+# ============================================================
+
     if data == "v2:seller:become":
         uid = _uid(update)
         user = await db.get_user_by_telegram_id(uid)
 
-    # Promote to seller
+    # Promote
     await db.promote_to_seller(user["user_id"])
     await q.answer("🎉 You are now a seller!")
 
     # Refresh menu
     text, kb = await ui.build_main_menu(user["user_id"])
     return await safe_edit(q, text, kb)
-
-
-
-    if data == "v2:seller:products":
-        return await handle_seller_products(update, context, q)
-
-    if data.startswith("v2:seller:view:"):
-        pid = int(data.split(":")[3])
-        return await handle_seller_product_view(update, context, q, pid)
-
-    if data.startswith("v2:seller:delete:"):
-        pid = int(data.split(":")[3])
-        return await handle_seller_delete_product(update, context, q, pid)
-
-    if data == "v2:seller:add":
-        context.user_data["addprod"] = {"step": 1}
-        return await safe_edit(q, *ui.build_add_product_prompt(1))
 
 
     # ============================================================
