@@ -29,10 +29,13 @@ py bot.py
 uvicorn server:app --reload --port 4242
 stripe listen --forward-to localhost:4242/webhook
 
-Install this dependency
-winget install Stripe.cli
-choco install stripe
-
+Install this dependency for stripe
+https://docs.stripe.com/stripe-cli/install?install-method=windows
+https://github.com/stripe/stripe-cli/tree/v1.32.0
+https://dashboard.stripe.com/acct_1SMVMKBZTDz6kN2e/auth_stripecli
+scoop install git
+cd "C:\Users\user\Dropbox\My PC (LAPTOP-UC7E1S6T)\Desktop\RP Work\Y3S2\C300\TelegramBot-Escrow"
+uvicorn server:app --reload --port 4242
 
 ---
 
