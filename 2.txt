@@ -25,6 +25,15 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxx
 - Install Solana CLI or RPC node endpoint
 - Use: https://api.mainnet-beta.solana.com
 
+py bot.py
+uvicorn server:app --reload --port 4242
+stripe listen --forward-to localhost:4242/webhook
+
+Install this dependency
+winget install Stripe.cli
+choco install stripe
+
+
 ---
 
  

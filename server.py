@@ -49,33 +49,41 @@ def save_json(file, data):
 # 🛒 Checkout Endpoint
 # Used when creating Stripe checkout links (for testing)
 # ==========================
-@app.post("/create_checkout")
-async def create_checkout():
-    """
-    Create a Stripe Checkout session.
-    Supports both credit card and PayNow for SGD payments.
-    """
+@app.post("/create_checkout_session")
+async def create_checkout_session(request: Request):
+    data = await request.json()
+
+    order_id = data["order_id"]
+    amount = int(float(data["amount"]) * 100)  # Convert to cents
+    user_id = data["user_id"]  # Telegram user ID
+
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=['card', 'paynow'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'sgd',
-                    'product_data': {'name': 'Example Item'},
-                    'unit_amount': 1500,  # $15.00 SGD
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url='https://example.com/success',
-            cancel_url='https://example.com/cancel',
+            payment_method_types=["card", "paynow"],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "sgd",
+                        "product_data": {"name": f"Order #{order_id}"},
+                        "unit_amount": amount,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            mode="payment",
+            success_url="https://yourdomain.com/success",
+            cancel_url="https://yourdomain.com/cancel",
+            metadata={
+                "type": "escrow_payment",
+                "order_id": str(order_id),
+                "user_id": str(user_id),
+            },
         )
 
-        logger.info(f"✅ Created checkout session: {session.url}")
-        return {"checkout_url": session.url}
+        return {"checkout_url": session.url, "session_id": session.id}
 
     except Exception as e:
-        logger.error(f"❌ Error creating checkout session: {e}")
+        logger.error(f"Stripe error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================
@@ -98,11 +106,33 @@ async def webhook_received(request: Request):
         logger.error(f"⚠️ Webhook verification failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-    # ✅ Payment completed
+        # ✅ Payment completed
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         logger.info(f"✅ Payment received for {session['amount_total']/100:.2f} {session['currency'].upper()}")
         logger.info(f"Session ID: {session['id']} | Customer Email: {session.get('customer_email')}")
+
+        # ========================================
+        # 🔒 ESCROW PAYMENT HANDLING (INSERT HERE)
+        # ========================================
+        metadata = session.get("metadata", {})
+
+        if metadata.get("type") == "escrow_payment":
+            order_id = metadata.get("order_id")
+            user_id = metadata.get("user_id")
+
+            orders = load_json(ORDERS_FILE)
+
+            for uid, user_orders in orders.items():
+                for order in user_orders:
+                    if str(order.get("id")) == str(order_id):
+                        order["status"] = "Paid"
+                        order["stripe_session_id"] = session["id"]
+                        save_json(ORDERS_FILE, orders)
+                        logger.info(f"💰 Order {order_id} marked as PAID via Stripe")
+
+            # (Optional) notify Telegram bot here
+            # e.g. send HTTP POST to bot webhook to inform the buyer + seller
 
     if session.get("metadata", {}).get("type") == "wallet_topup":
         user_id = int(session["metadata"]["user_id"])
