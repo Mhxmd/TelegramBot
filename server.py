@@ -57,6 +57,7 @@ def save_json(file, data):
 # 🛒 Checkout Endpoint
 # Used when creating Stripe checkout links (for testing)
 # ==========================
+<<<<<<< HEAD
 @app.post("/create_checkout_session")
 async def create_checkout_session(request: Request):
     data = await request.json()
@@ -92,6 +93,35 @@ async def create_checkout_session(request: Request):
 
     except Exception as e:
         logger.error(f"Stripe error: {e}")
+=======
+@app.post("/create_checkout")
+async def create_checkout():
+    """
+    Create a Stripe Checkout session.
+    Supports both credit card and PayNow for SGD payments.
+    """
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card', 'paynow'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'sgd',
+                    'product_data': {'name': 'Example Item'},
+                    'unit_amount': 1500,  # $15.00 SGD
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url='https://example.com/success',
+            cancel_url='https://example.com/cancel',
+        )
+
+        logger.info(f"✅ Created checkout session: {session.url}")
+        return {"checkout_url": session.url}
+
+    except Exception as e:
+        logger.error(f"❌ Error creating checkout session: {e}")
+>>>>>>> master
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================
@@ -114,12 +144,17 @@ async def webhook_received(request: Request):
         logger.error(f"⚠️ Webhook verification failed: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+<<<<<<< HEAD
         # ✅ Payment completed
+=======
+    # ✅ Payment completed
+>>>>>>> master
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         logger.info(f"✅ Payment received for {session['amount_total']/100:.2f} {session['currency'].upper()}")
         logger.info(f"Session ID: {session['id']} | Customer Email: {session.get('customer_email')}")
 
+<<<<<<< HEAD
         # ========================================
         # 🔒 ESCROW PAYMENT HANDLING (INSERT HERE)
         # ========================================
@@ -142,6 +177,8 @@ async def webhook_received(request: Request):
             # (Optional) notify Telegram bot here
             # e.g. send HTTP POST to bot webhook to inform the buyer + seller
 
+=======
+>>>>>>> master
     if session.get("metadata", {}).get("type") == "wallet_topup":
         user_id = int(session["metadata"]["user_id"])
         amount = session["amount_total"] / 100
