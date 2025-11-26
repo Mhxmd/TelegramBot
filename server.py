@@ -1,14 +1,22 @@
-# ==========================
-# 💳 server.py — Stripe Checkout + Webhook Handler
-# Handles local payment creation (card / PayNow) and webhook verification
-# ==========================
-
 import os
 import json
 import logging
-import stripe
+import pathlib
+import stripe                        
 from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
+
+
+# Absolute path to this folder
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+
+# Force load .env from this exact folder
+env_path = BASE_DIR / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Debug print
+print("DEBUG STRIPE_SECRET_KEY  =", repr(os.getenv("STRIPE_SECRET_KEY")))
+print("DEBUG WEBHOOK_SECRET     =", repr(os.getenv("STRIPE_WEBHOOK_SECRET")))
 
 # ==========================
 # ⚙️ CONFIGURATION

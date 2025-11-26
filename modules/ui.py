@@ -1,15 +1,23 @@
 VERCEL_PAY_URL = "https://fake-paynow-yourname.vercel.app"
 
-
-import stripe
+import os
 import qrcode
 from io import BytesIO
+from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from modules import storage, seller, chat
 import modules.wallet_utils as wallet   # safe import
+
+# Load . env file from the project root
+load_dotenv()
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+
+import stripe
+stripe.api_key = STRIPE_SECRET_KEY
 
 # Built-in product catalog
 CATALOG = {
