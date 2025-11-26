@@ -1,0 +1,55 @@
+Telegram API's
+
+https://core.telegram.org/bots/api
+
+Paynow API
+
+Explanation for bot.py
+
+To run the server.py use py server.py
+To run the bot.py , use py bot.py
+To push to github, use "git add ." , git commit -m "Type ur message here", then lastly use git push
+
+
+
+When you later deploy your bot (e.g., to Render, Railway, or Vercel),
+you’ll replace the local URL (http://localhost:4242/webhook) with your public one:
+
+https://yourdomain.com/webhook
+
+
+and Stripe will send live payment data there automatically.
+
+| Section          | What it Does               | What You Can Customize            |
+| ---------------- | -------------------------- | --------------------------------- |
+| Imports & Config | Loads keys and tools       | Add new API keys                  |
+| Balance System   | Stores user wallet data    | Rename file or switch to database |
+| Menus            | Builds Telegram UI         | Add buttons or wallet section     |
+| Payment Flow     | Integrates Stripe + PayNow | Add crypto or more options        |
+| Callback Router  | Handles button logic       | Add new features like “withdraw”  |
+| Main Function    | Runs the bot               | Deploy or switch to webhooks      |
+
+
+| Section         | Purpose              | Editable? | Suggested Improvement           |
+| --------------- | -------------------- | --------- | ------------------------------- |
+| Header          | Project info         | ✅         | Add contributors & version      |
+| Config & Keys   | Load secrets         | ⚠️        | Rename STRIPE var for clarity   |
+| Runtime State   | In-memory cache      | ✅         | Move to Redis if scaling        |
+| JSON Files      | Persistent storage   | ⚠️        | Use SQLite / DB for reliability |
+| Catalog         | Built-in items       | ✅         | Move to catalog.json            |
+| Logging         | Track events         | ✅         | Save to logs/bot.log            |
+| JSON Helpers    | File read/write      | ⚠️        | Add try/except handling         |
+| Balance/Orders  | Handle payments      | ⚠️        | Add order IDs                   |
+| Roles           | Manage user roles    | ✅         | Add role checks                 |
+| Seller Products | Listings CRUD        | ⚠️        | Add edit/delete                 |
+| Chat Helpers    | Chat backend         | ✅         | Add read receipts               |
+| Utils           | Support functions    | ✅         | Improve PayNow logic            |
+| UI Builders     | Generate menus       | ✅         | Modularize per section          |
+| Commands        | Handle /start etc    | ✅         | Add more commands               |
+| Menu Nav        | Navigate sections    | ⚠️        | Split functions                 |
+| Shop/Checkout   | Payment flows        | ⚠️        | Add Stripe session tracking     |
+| Contact Seller  | Buyer-seller chat    | ✅         | Enable both-way chat            |
+| Seller Center   | Manage listings      | ✅         | Add image support               |
+| Message Handler | Core relay logic     | ⚠️        | Add anti-spam + logs            |
+| Callback Router | Handles button logic | ✅         | Clean modular routes            |
+| Main            | Launch bot           | ⚠️        | Add webhook support             |
