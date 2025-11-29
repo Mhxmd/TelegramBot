@@ -81,6 +81,15 @@ def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> B
     bio.url = url
     return bio
 
+# ---------------- SEARCH LOGIC ----------------
+def search_products_by_name(query: str):
+    query = query.lower().strip()
+    results = []
+    for it in enumerate_all_products():
+        name = it.get("name", "").lower()
+        if query in name:
+            results.append(it)
+    return results
 
 # ---------------- MAIN MENU ----------------
 def build_main_menu(balance: float):
@@ -102,17 +111,25 @@ def build_main_menu(balance: float):
 def build_shop_keyboard():
     items = enumerate_all_products()
     rows, text_lines = [], []
-    for it in items:
-        text_lines.append(f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}")
-    rows.append([
-    InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
-    InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
-    InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
-])
 
+    for it in items:
+        text_lines.append(
+            f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}"
+        )
+
+        rows.append([
+            InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
+            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
+        ])
+
+    # Search + Menu buttons BELOW the product buttons
+    rows.append([InlineKeyboardButton("🔍 Search", callback_data="shop:search")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+
     text = "🛍️ *Shop*\n\n" + "\n".join(text_lines) if text_lines else "No listings yet."
     return text, InlineKeyboardMarkup(rows)
+
 
 # ========================================================
 # CART UI 
@@ -194,6 +211,38 @@ async def show_paynow_cart(update, context, total):
         reply_markup=kb
     )
 
+# ---------------- SEARCH PROMPT ----------------
+async def ask_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    context.user_data["awaiting_search"] = True
+    await q.edit_message_text("Send the product name to search.")
+
+# ---------------- SEARCH RESULT DISPLAY ----------------
+async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE, results):
+    msg = update.effective_message
+
+    if not results:
+        await msg.reply_text("No products found.")
+        return
+
+    text_lines = []
+    rows = []
+
+    for it in results:
+        text_lines.append(f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}")
+        rows.append([
+            InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
+            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
+        ])
+
+    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+
+    await msg.reply_text(
+        "Search results:\n\n" + "\n".join(text_lines),
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 # ---------------- PAYNOW / STRIPE FOR SINGLE PURCHASE ----------------
 def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:

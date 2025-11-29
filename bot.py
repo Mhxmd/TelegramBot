@@ -111,6 +111,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ui.on_menu(update, context)
             return
 
+        # ---------- SEARCH BUTTON ----------
+        if data == "shop:search":
+            await ui.ask_search(update, context)
+            return
+
         # ---------- SHOP FLOW ----------
         if data.startswith("buy:"):
             _, sku, qty = data.split(":")
@@ -322,6 +327,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 5) Otherwise prompt menu
     if text.lower() not in ("/start", "/shop"):
         await msg.reply_text("Type /start to open the menu.")
+    
+    # ---------------- HANDLE SEARCH TEXT ----------------
+    if context.user_data.get("awaiting_search"):
+        context.user_data["awaiting_search"] = False
+        results = ui.search_products_by_name(text)
+        await ui.show_search_results(update, context, results)
+        return
+
 
 
 # ==========================
