@@ -36,7 +36,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # our modules
-from modules import storage, ui, chat, seller, notifications  # noqa: E402
+from modules import storage, ui, chat, seller, shopping_cart  # noqa: E402
 import modules.wallet_utils as wallet  # noqa: E402
 
 # logging
@@ -137,6 +137,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ui.show_paynow(update, context, sku, int(qty))
             return
 
+        if data.startswith("stripe_cart:"):
+            _, total = data.split(":")
+            return await ui.stripe_cart_checkout(update, context, total)
+
+        if data.startswith("paynow_cart:"):
+            _, total = data.split(":")
+            return await ui.show_paynow_cart(update, context, total)
+        
+
         # Simulated return buttons from fake gateway
         if data.startswith("payconfirm:"):
             order_id = data.split(":", 1)[1]
@@ -202,6 +211,41 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "wallet:deposit":
             await wallet.show_deposit_info(update, context)
             return
+        
+        # ---------- SHOPPING CART ----------
+        if data.startswith("cart_add:"):
+            _, sku = data.split(":")
+            await shopping_cart.add_item(update, context, sku)
+            return await shopping_cart.view_cart(update, context)
+
+        if data.startswith("cart:remove:"):
+            _, _, sku = data.split(":")
+            await shopping_cart.remove_item(update, context, sku)
+            return
+
+        if data.startswith("cart:addqty:"):
+            _, _, sku = data.split(":")
+            await shopping_cart.change_quantity(update, context, sku, +1)
+            return
+
+        if data.startswith("cart:subqty:"):
+            _, _, sku = data.split(":")
+            await shopping_cart.change_quantity(update, context, sku, -1)
+            return
+
+        if data == "cart:view":
+            return await shopping_cart.view_cart(update, context)
+
+        if data == "cart:checkout_all":
+            return await ui.cart_checkout_all(update, context)
+
+        if data == "cart:confirm_payment":
+            return await shopping_cart.confirm_payment(update, context)
+
+        if data == "cart:cancel":
+            return await shopping_cart.view_cart(update, context)
+
+
 
         # ---------- FUNCTIONS / HELP ----------
         if data == "menu:functions":

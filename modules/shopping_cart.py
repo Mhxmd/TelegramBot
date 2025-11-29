@@ -1,211 +1,231 @@
-# modules/shopping_cart.py
 # ==========================================
-# 🛒 Telegram Marketplace Shopping Cart Module
-# ==========================================
-# Handles:
-#   - Adding items to cart
-#   - Viewing / editing cart
-#   - Checking out multiple items
-#
-# Depends on: modules.storage, modules.ui
+# Shopping Cart (DICT MODE)
 # ==========================================
 
 import json
 import os
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
-from modules import storage, ui
 
+# ================================
+# FILE PATHS
+# ================================
 CART_FILE = "cart.json"
+SELLER_PRODUCTS_FILE = "seller_products.json"
 
-# ==========================
-# Helpers
-# ==========================
+# ================================
+# LOAD PRODUCTS (NO ui.py import)
+# ================================
+BUILTIN_PRODUCTS = {
+    "cat": {"sku": "cat", "name": "Cat Plush", "price": 15, "emoji": "🐱", "seller_id": 0},
+    "hoodie": {"sku": "hoodie", "name": "Hoodie", "price": 30, "emoji": "🧥", "seller_id": 0},
+    "blackcap": {"sku": "blackcap", "name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0},
+}
+
+def load_all_products():
+    """Merge built-in items + seller uploaded items."""
+    products = dict(BUILTIN_PRODUCTS)
+
+    if os.path.exists(SELLER_PRODUCTS_FILE):
+        try:
+            with open(SELLER_PRODUCTS_FILE, "r") as f:
+                data = json.load(f)
+                for seller_id, items in data.items():
+                    for item in items:
+                        if "sku" in item:
+                            products[item["sku"]] = item
+        except:
+            pass
+
+    return products
+
+
+def get_any_product_by_sku(sku):
+    products = load_all_products()
+    return products.get(sku)
+
+
+# ======================================
+# CART STORAGE HELPERS
+# ======================================
 def load_cart():
     if not os.path.exists(CART_FILE):
         return {}
-    with open(CART_FILE, "r") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
+    try:
+        with open(CART_FILE, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except:
+        return {}
 
 def save_cart(data):
     with open(CART_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def get_user_cart(user_id: int):
+def get_user_cart(uid):
     data = load_cart()
-    return data.get(str(user_id), [])
+    return data.get(str(uid), {})
 
-def save_user_cart(user_id: int, items):
-    data = load_cart()
-    data[str(user_id)] = items
-    save_cart(data)
-
-def clear_cart(user_id: int):
-    data = load_cart()
-    data[str(user_id)] = []
-    save_cart(data)
-
-# ==========================
-# Add / Remove / Update
-# ==========================
-def add_to_cart(user_id: int, item):
-    cart = get_user_cart(user_id)
-    # if item already exists, increase qty
-    for it in cart:
-        if it["sku"] == item["sku"]:
-            it["qty"] += item.get("qty", 1)
-            break
-    else:
-        cart.append(item)
-    save_user_cart(user_id, cart)
-
-def remove_from_cart(user_id: int, sku: str):
-    cart = get_user_cart(user_id)
-    cart = [it for it in cart if it["sku"] != sku]
-    save_user_cart(user_id, cart)
-
-def update_quantity(user_id: int, sku: str, new_qty: int):
-    cart = get_user_cart(user_id)
-    for it in cart:
-        if it["sku"] == sku:
-            it["qty"] = max(1, new_qty)
-    save_user_cart(user_id, cart)
-
-# ==========================
-# Telegram UI
-# ==========================
-async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    uid = update.effective_user.id
+def get_total(uid):
     cart = get_user_cart(uid)
+    return sum(item["price"] * item["qty"] for item in cart.values())
 
-    if not cart:
-        await q.edit_message_text(
-            "🛒 *Your cart is empty.*",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]),
-        )
-        return
+def get_cart_item_count(uid):
+    return len(get_user_cart(uid))
 
-    total = sum(it["price"] * it["qty"] for it in cart)
-    text = "🛒 *Your Shopping Cart:*\n\n"
-    for it in cart:
-        text += f"{it.get('emoji','🛍️')} *{it['name']}* — ${it['price']:.2f} × {it['qty']} = *${it['price']*it['qty']:.2f}*\n"
+def save_user_cart(uid, cart_dict):
+    data = load_cart()
+    data[str(uid)] = cart_dict
+    save_cart(data)
 
-    text += f"\n💰 *Total:* ${total:.2f}"
+def clear_cart(uid):
+    data = load_cart()
+    data[str(uid)] = {}
+    save_cart(data)
 
-    # Build buttons
-    buttons = []
-    for it in cart:
-        sku = it["sku"]
-        buttons.append([
-            InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}"),
-            InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
-            InlineKeyboardButton("❌ Remove", callback_data=f"cart:remove:{sku}")
-        ])
-    buttons.append([InlineKeyboardButton("💳 Checkout All", callback_data="cart:checkout")])
-    buttons.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
-    await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def add_item(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str):
-    from modules.ui import get_any_product_by_sku
-    q = update.callback_query
-    uid = update.effective_user.id
+# ======================================
+# CART OPERATIONS
+# ======================================
+def add_to_cart(uid, sku):
+    cart = get_user_cart(uid)
     product = get_any_product_by_sku(sku)
 
     if not product:
-        await q.answer("Item not found!", show_alert=True)
-        return
+        return False
 
-    item = {
-        "sku": sku,
-        "name": product["name"],
-        "price": float(product["price"]),
-        "qty": 1,
-        "seller_id": product.get("seller_id", 0),
-        "emoji": product.get("emoji", "🛍️"),
-    }
+    if sku not in cart:
+        cart[sku] = {
+            "sku": sku,
+            "name": product["name"],
+            "price": float(product["price"]),
+            "qty": 1,
+            "emoji": product.get("emoji", "🛍️"),
+            "seller_id": product.get("seller_id", 0),
+        }
+    else:
+        cart[sku]["qty"] += 1
 
-    add_to_cart(uid, item)
-    await q.answer(f"✅ {product['name']} added to cart!", show_alert=False)
+    save_user_cart(uid, cart)
+    return True
 
 
-async def change_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, delta: int):
+def update_quantity(uid, sku, qty):
+    cart = get_user_cart(uid)
+
+    if sku in cart:
+        if qty <= 0:
+            del cart[sku]
+        else:
+            cart[sku]["qty"] = qty
+
+    save_user_cart(uid, cart)
+
+
+def remove_from_cart(uid, sku):
+    cart = get_user_cart(uid)
+    if sku in cart:
+        del cart[sku]
+    save_user_cart(uid, cart)
+
+
+# ======================================
+# TELEGRAM HANDLERS
+# ======================================
+async def add_item(update, context, sku):
+    uid = update.effective_user.id
+    add_to_cart(uid, sku)
+    await update.callback_query.answer("🛒 Added to cart!")
+
+
+async def change_quantity(update, context, sku, delta):
     uid = update.effective_user.id
     cart = get_user_cart(uid)
-    for it in cart:
-        if it["sku"] == sku:
-            it["qty"] = max(1, it["qty"] + delta)
-    save_user_cart(uid, cart)
-    await view_cart(update, context)
 
-async def remove_item(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str):
+    if sku in cart:
+        new_qty = cart[sku]["qty"] + delta
+        update_quantity(uid, sku, max(0, new_qty))
+
+    return await view_cart(update, context)
+
+
+async def remove_item(update, context, sku):
     uid = update.effective_user.id
     remove_from_cart(uid, sku)
-    await view_cart(update, context)
+    return await view_cart(update, context)
 
-# ==========================
-# Checkout
-# ==========================
-async def checkout_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from modules.ui import show_paynow
+# ======================
+# WRAPPERS FOR bot.py
+# ======================
+async def checkout_cart(update, context):
+    return await ui.cart_checkout_all(update, context)
+
+async def paynow_cart(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+    total = get_total(uid)
+    return await ui.show_paynow_cart(update, context, total)
+
+
+# ======================================
+# VIEW CART
+# ======================================
+async def view_cart(update, context):
     q = update.callback_query
     uid = update.effective_user.id
     cart = get_user_cart(uid)
 
     if not cart:
-        await q.answer("Your cart is empty!", show_alert=True)
-        return
+        return await q.edit_message_text(
+            "🛒 *Your cart is empty.*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛍 Shop", callback_data="menu:shop")],
+                [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
+            ])
+        )
 
-    total = sum(it["price"] * it["qty"] for it in cart)
-    summary = "\n".join([f"{it['name']} × {it['qty']} = ${it['price']*it['qty']:.2f}" for it in cart])
+    text = "🛒 *Your Cart*\n\n"
+    total = 0
+    rows = []
 
-    caption = (
-        f"🧾 *Checkout Summary:*\n\n{summary}\n\n💰 *Total:* ${total:.2f}\n\n"
-        "Choose payment method:"
-    )
+    for sku, item in cart.items():
+        subtotal = item["price"] * item["qty"]
+        total += subtotal
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇸🇬 PayNow", callback_data="cart:paynow")],
-        [InlineKeyboardButton("💳 Stripe", callback_data="cart:stripe")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
-    ])
+        text += (
+            f"{item['emoji']} *{item['name']}* — "
+            f"${item['price']:.2f} × {item['qty']} = *${subtotal:.2f}*\n"
+        )
 
-    await q.edit_message_text(caption, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+        rows.append([
+            InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
+            InlineKeyboardButton(f"{item['qty']}", callback_data="noop"),
+            InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}"),
+            InlineKeyboardButton("❌ Remove", callback_data=f"cart:remove:{sku}")
+        ])
 
-async def paynow_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from modules.ui import generate_paynow_qr
+    text += f"\n💰 *Total:* ${total:.2f}"
+
+    rows.append([InlineKeyboardButton("🧹 Clear", callback_data="cart_clear")])
+
+    # IMPORTANT: use correct callback for ui.py integration
+    rows.append([InlineKeyboardButton("💳 Checkout All", callback_data="cart:checkout_all")])
+
+    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+
+    return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+
+# ======================================
+# PAYMENT CONFIRMATION
+# ======================================
+async def confirm_payment(update, context):
     uid = update.effective_user.id
-    cart = get_user_cart(uid)
-    total = sum(it["price"] * it["qty"] for it in cart)
-
-    qr = generate_paynow_qr(total, "Cart Checkout")
-    caption = f"🇸🇬 *PayNow — Cart Checkout*\n\n💰 Total: ${total:.2f}\n\nAfter payment, click *I HAVE PAID*."
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I HAVE PAID", callback_data="cart:confirm_payment")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cart:cancel")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
-    ])
-
-    await update.callback_query.message.reply_photo(
-        photo=qr,
-        caption=caption,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=kb
-    )
-
-async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    cart = get_user_cart(uid)
-    total = sum(it["price"] * it["qty"] for it in cart)
+    total = get_total(uid)
     clear_cart(uid)
+
     await update.callback_query.edit_message_text(
-        f"✅ Payment confirmed for *${total:.2f}*!\n\nYour cart has been cleared.",
-        parse_mode=ParseMode.MARKDOWN
+        f"✅ Payment confirmed!\nPaid: *${total:.2f}*\nCart cleared.",
+        parse_mode="Markdown"
     )

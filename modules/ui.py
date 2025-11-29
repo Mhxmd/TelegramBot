@@ -9,7 +9,9 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from modules import storage, seller, chat
+from modules import shopping_cart
 import modules.wallet_utils as wallet   # safe import
+
 
 # Load . env file from the project root
 load_dotenv()
@@ -102,16 +104,98 @@ def build_shop_keyboard():
     rows, text_lines = [], []
     for it in items:
         text_lines.append(f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}")
-        rows.append([
-            InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
-            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
-        ])
+    rows.append([
+    InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+    InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
+    InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
+])
+
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
     text = "🛍️ *Shop*\n\n" + "\n".join(text_lines) if text_lines else "No listings yet."
     return text, InlineKeyboardMarkup(rows)
 
+# ========================================================
+# CART UI 
+# ========================================================
 
-# ---------------- PAYNOW / STRIPE ----------------
+# ----------------PAYNOW / STRIPE FOR CART PURCHASE ----------------------
+
+async def cart_checkout_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    cart = shopping_cart.get_user_cart(uid)
+    if not cart:
+        return await q.answer("Your cart is empty!", show_alert=True)
+
+    # Convert cart → combined name + total amount
+    total = sum(item["price"] * item["qty"] for item in cart.values())
+
+    item_name = "Multiple Items"
+    qty = 1  # treated as single combined checkout
+
+    # Reuse existing flow (Stripe/PayNow)
+    txt = (
+        f"🧾 *Cart Checkout*\n"
+        f"Items: {len(cart)}\n"
+        f"Total: *${total:.2f}*\n\n"
+        "Choose payment method:"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pay with Stripe", callback_data=f"stripe_cart:{total}")],
+        [InlineKeyboardButton("🇸🇬 PayNow QR", callback_data=f"paynow_cart:{total}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="menu:cart")],
+    ])
+
+    return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+
+async def stripe_cart_checkout(update, context, total):
+    total_cents = int(float(total) * 100)
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "Cart Checkout"},
+                    "unit_amount": total_cents,
+                },
+                "quantity": 1
+            }],
+            mode="payment",
+            success_url="https://example.com/success",
+            cancel_url="https://example.com/cancel",
+        )
+    except Exception as e:
+        return await update.callback_query.edit_message_text(f"Stripe error: `{e}`")
+
+    await update.callback_query.edit_message_text(
+        f"💳 **Pay with Stripe**\nClick below:\n{session.url}",
+        parse_mode="Markdown",
+    )
+
+async def show_paynow_cart(update, context, total):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    qr = generate_paynow_qr(float(total), "Cart Checkout")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I HAVE PAID", callback_data="cart:confirm_payment")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cart:cancel")],
+    ])
+
+    await q.message.reply_photo(
+        photo=InputFile(qr, filename="cart_paynow.png"),
+        caption=f"Pay *${float(total):.2f}*",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+
+
+# ---------------- PAYNOW / STRIPE FOR SINGLE PURCHASE ----------------
 def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:
     """
     Create a QR image pointing to fake PayNow gateway.
@@ -261,7 +345,11 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if tab == "shop":
         txt, kb = build_shop_keyboard()
         return await safe_edit(txt, kb)
+    
+    if tab == "cart":
+        return await shopping_cart.view_cart(update, context)
 
+    
     if tab == "wallet":
         bal = storage.get_balance(uid)
         pub = wallet.ensure_user_wallet(uid)["public_key"]
@@ -288,7 +376,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb, txt = build_main_menu(storage.get_balance(uid))
         return await safe_edit(txt, kb)
 
-    # ===========================
+# ===================== CART ACTION HANDLERS =====================
+
+# ===========================
 # SHOP BUY / QTY / CHECKOUT
 # ===========================
 
