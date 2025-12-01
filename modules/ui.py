@@ -94,18 +94,31 @@ def search_products_by_name(query: str):
 # ---------------- MAIN MENU ----------------
 def build_main_menu(balance: float):
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛍️ Shop", callback_data="menu:shop"),
-         InlineKeyboardButton("📦 Orders", callback_data="menu:orders")],
-        [InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet"),
-         InlineKeyboardButton("🛠 Sell", callback_data="menu:sell")],
-        [InlineKeyboardButton("💬 Public Chat", callback_data="chat:public_open"),
-         InlineKeyboardButton("✉️ Messages", callback_data="menu:messages")],
-        [InlineKeyboardButton("⚙️ Functions", callback_data="menu:functions"),
-         InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")],
+        [
+            InlineKeyboardButton("🛍️ Shop", callback_data="menu:shop"),
+            InlineKeyboardButton("📦 Orders", callback_data="menu:orders"),
+            InlineKeyboardButton("🛒 View Cart", callback_data="cart:view")
+        ],
+        [
+            InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet"),
+            InlineKeyboardButton("🛠 Sell", callback_data="menu:sell")
+        ],
+        [
+            InlineKeyboardButton("💬 Public Chat", callback_data="chat:public_open"),
+            InlineKeyboardButton("✉️ Messages", callback_data="menu:messages")
+        ],
+        [
+            InlineKeyboardButton("⚙️ Functions", callback_data="menu:functions"),
+            InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")
+        ],
     ])
-    txt = f"👋 *Welcome to Telegram Marketplace!*\n\n💰 Balance: *${balance:.2f}*\n—\nBrowse, sell & chat."
+    txt = (
+        f"👋 *Welcome to Telegram Marketplace!*\n\n"
+        f"💰 Balance: *${balance:.2f}*\n"
+        f"—\n"
+        f"Browse, sell & chat."
+    )
     return kb, txt
-
 
 # ---------------- SHOP UI ----------------
 def build_shop_keyboard():
