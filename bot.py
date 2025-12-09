@@ -250,6 +250,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "cart:cancel":
             return await shopping_cart.view_cart(update, context)
 
+        # ---------- NETS Callback  ----------
+        if data.startswith("nets:"):
+            _, total, qty = data.split(":")
+            return await ui.show_nets_qr(update, context, sku, int(qty))
 
 
         # ---------- FUNCTIONS / HELP ----------

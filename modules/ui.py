@@ -12,74 +12,98 @@ from modules import storage, seller, chat
 from modules import shopping_cart
 import modules.wallet_utils as wallet   # safe import
 
+import stripe
 
-# Load . env file from the project root
+# Load .env file from the project root
 load_dotenv()
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
-
-import stripe
 stripe.api_key = STRIPE_SECRET_KEY
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Built-in product catalog
 CATALOG = {
-    "cat": {"name": "Cat Plush", "price": 15, "emoji": "🐱", "seller_id": 0, "desc": "Cute cat plush."},
-    "hoodie": {"name": "Hoodie", "price": 30, "emoji": "🧥", "seller_id": 0, "desc": "Comfy cotton hoodie."},
-    "blackcap": {"name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0, "desc": "Minimalist black cap."},
+    "cat": {
+        "name": "Cat Plush",
+        "price": 15,
+        "emoji": "🐱",
+        "seller_id": 0,
+        "desc": "Cute cat plush.",
+    },
+    "hoodie": {
+        "name": "Hoodie",
+        "price": 30,
+        "emoji": "🧥",
+        "seller_id": 0,
+        "desc": "Minimalist navy hoodie.",
+    },
+    "blackcap": {
+        "name": "Black Cap",
+        "price": 12,
+        "emoji": "🧢",
+        "seller_id": 0,
+        "desc": "Matte black cap.",
+    },
 }
 
 # ---------------- HELPERS ----------------
-def clamp_qty(q):
+def clamp_qty(q: int) -> int:
+    """Clamp quantity between 1 and 99."""
     return max(1, min(int(q), 99))
 
+
 def enumerate_all_products():
+    """Built-in catalog + dynamic seller listings."""
     items = []
     for sku, p in CATALOG.items():
         items.append({**p, "sku": sku})
     data = storage.load_json(storage.SELLER_PRODUCTS_FILE)
-    for sid, plist in data.items():
+    for _, plist in data.items():
         for it in plist:
             items.append(it)
     return items
 
+
 def get_any_product_by_sku(sku: str):
+    """Look up product from built-in catalog or seller listings."""
     if sku in CATALOG:
         return CATALOG[sku]
     data = storage.load_json(storage.SELLER_PRODUCTS_FILE)
     for _, items in data.items():
         for it in items:
-            if it["sku"] == sku:
+            if it.get("sku") == sku:
                 return it
     return None
 
-def generate_dummy_payment_url(order_id: str, item_name: str, amount: float) -> str:
-    """
-    Builds the fake gateway URL with query params that the Vercel page will read.
-    Example: https://fake-paynow-mu.vercel.app/?order=123&item=Cat&amount=15
-    """
-    from urllib.parse import urlencode
-    qs = urlencode({"order": order_id, "item": item_name, "amount": f"{amount:.2f}"})
-    return VERCEL_PAY_URL.rstrip("/") + "/?" + qs
 
-def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:
+def generate_paynow_qr(amount: float, item_name: str, order_id: str | None = None) -> BytesIO:
     """
-    Create a QR image that points to the dummy payment page on Vercel.
-    Returns BytesIO ready to be sent as InputFile.
+    Create a QR image pointing to a fake PayNow gateway page hosted on Vercel.
+    Encodes: https://fake-paynow.../?order=...&item=...&amount=...
     """
+    import time, random
+    from urllib.parse import urlencode
+
     if order_id is None:
-        # make a short pseudo-random order id (timestamp + random)
-        import time, random
         order_id = f"O{int(time.time())}{random.randint(100,999)}"
 
-    url = generate_dummy_payment_url(order_id, item_name, amount)
+    qs = urlencode({
+        "order": order_id,
+        "item": item_name,
+        "amount": f"{amount:.2f}",
+    })
+    url = VERCEL_PAY_URL.rstrip("/") + "/?" + qs
+
     img = qrcode.make(url)
     bio = BytesIO()
     img.save(bio, "PNG")
     bio.seek(0)
-    # attach metadata so caller can know order id / url if needed
-    bio.order_id = order_id   # dynamic attribute for convenience
-    bio.url = url
+    # Attach metadata for callers
+    bio.order_id = order_id  # type: ignore[attr-defined]
+    bio.url = url            # type: ignore[attr-defined]
     return bio
+
 
 # ---------------- SEARCH LOGIC ----------------
 def search_products_by_name(query: str):
@@ -91,34 +115,39 @@ def search_products_by_name(query: str):
             results.append(it)
     return results
 
+
 # ---------------- MAIN MENU ----------------
 def build_main_menu(balance: float):
+    """
+    Main landing menu – premium black/blue fintech tone.
+    """
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🛍️ Shop", callback_data="menu:shop"),
+            InlineKeyboardButton("🛍️ Marketplace", callback_data="menu:shop"),
             InlineKeyboardButton("📦 Orders", callback_data="menu:orders"),
-            InlineKeyboardButton("🛒 View Cart", callback_data="cart:view")
+            InlineKeyboardButton("🛒 Cart", callback_data="cart:view"),
         ],
         [
             InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet"),
-            InlineKeyboardButton("🛠 Sell", callback_data="menu:sell")
+            InlineKeyboardButton("🛠 Sell", callback_data="menu:sell"),
         ],
         [
-            InlineKeyboardButton("💬 Public Chat", callback_data="chat:public_open"),
-            InlineKeyboardButton("✉️ Messages", callback_data="menu:messages")
+            InlineKeyboardButton("💬 Public Lounge", callback_data="chat:public_open"),
+            InlineKeyboardButton("✉️ Direct Messages", callback_data="menu:messages"),
         ],
         [
             InlineKeyboardButton("⚙️ Functions", callback_data="menu:functions"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")
+            InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh"),
         ],
     ])
     txt = (
-        f"👋 *Welcome to Telegram Marketplace!*\n\n"
-        f"💰 Balance: *${balance:.2f}*\n"
-        f"—\n"
-        f"Browse, sell & chat."
+        "✨ *NovaMart – Telegram Escrow Marketplace*\n\n"
+        f"💰 *Fiat Balance:* `${balance:.2f}`\n"
+        "──\n"
+        "_Browse, trade and chat in a secure escrow environment._"
     )
     return kb, txt
+
 
 # ---------------- SHOP UI ----------------
 def build_shop_keyboard():
@@ -127,20 +156,26 @@ def build_shop_keyboard():
 
     for it in items:
         text_lines.append(
-            f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}"
+            f"{it.get('emoji','🛒')} *{it['name']}* — `${it['price']:.2f}`"
         )
 
         rows.append([
-            InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+            InlineKeyboardButton(f"Buy `${it['price']:.2f}`", callback_data=f"buy:{it['sku']}:1"),
             InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
-            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
+            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
         ])
 
-    # Search + Menu buttons BELOW the product buttons
     rows.append([InlineKeyboardButton("🔍 Search", callback_data="shop:search")])
-    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")])
 
-    text = "🛍️ *Shop*\n\n" + "\n".join(text_lines) if text_lines else "No listings yet."
+    if text_lines:
+        text = "🛍️ *Marketplace Listings*\n\n" + "\n".join(text_lines)
+    else:
+        text = (
+            "🛍️ *Marketplace Listings*\n\n"
+            "_No listings yet. Be the first to sell something._"
+        )
+
     return text, InlineKeyboardMarkup(rows)
 
 
@@ -148,39 +183,41 @@ def build_shop_keyboard():
 # CART UI 
 # ========================================================
 
-# ----------------PAYNOW / STRIPE FOR CART PURCHASE ----------------------
-
 async def cart_checkout_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Consolidated cart checkout – user selects payment rail (Stripe / PayNow / NETS).
+    """
     q = update.callback_query
     uid = update.effective_user.id
 
     cart = shopping_cart.get_user_cart(uid)
     if not cart:
-        return await q.answer("Your cart is empty!", show_alert=True)
+        return await q.answer("Your cart is empty.", show_alert=True)
 
-    # Convert cart → combined name + total amount
     total = sum(item["price"] * item["qty"] for item in cart.values())
+    line_count = len(cart)
 
-    item_name = "Multiple Items"
-    qty = 1  # treated as single combined checkout
-
-    # Reuse existing flow (Stripe/PayNow)
     txt = (
-        f"🧾 *Cart Checkout*\n"
-        f"Items: {len(cart)}\n"
-        f"Total: *${total:.2f}*\n\n"
-        "Choose payment method:"
+        "🧾 *Cart Checkout*\n\n"
+        f"• Items: *{line_count}*\n"
+        f"• Total: *${total:.2f}*\n\n"
+        "_Select a payment method to continue:_"
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay with Stripe", callback_data=f"stripe_cart:{total}")],
-        [InlineKeyboardButton("🇸🇬 PayNow QR", callback_data=f"paynow_cart:{total}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="menu:cart")],
+        [InlineKeyboardButton("💳 Stripe (Card)", callback_data=f"stripe_cart:{total}")],
+        [InlineKeyboardButton("🇸🇬 PayNow QR (Demo)", callback_data=f"paynow_cart:{total}")],
+        [InlineKeyboardButton("🟦 NETS QR (Sandbox)", callback_data=f"nets_cart:{total}")],
+        [InlineKeyboardButton("🔙 Back to Cart", callback_data="menu:cart")],
     ])
 
-    return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+    return await q.edit_message_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
 
-async def stripe_cart_checkout(update, context, total):
+
+async def stripe_cart_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
+    """
+    Stripe checkout for entire cart as a single line item.
+    """
     total_cents = int(float(total) * 100)
 
     try:
@@ -192,7 +229,7 @@ async def stripe_cart_checkout(update, context, total):
                     "product_data": {"name": "Cart Checkout"},
                     "unit_amount": total_cents,
                 },
-                "quantity": 1
+                "quantity": 1,
             }],
             mode="payment",
             success_url="https://example.com/success",
@@ -202,14 +239,18 @@ async def stripe_cart_checkout(update, context, total):
         return await update.callback_query.edit_message_text(f"Stripe error: `{e}`")
 
     await update.callback_query.edit_message_text(
-        f"💳 **Pay with Stripe**\nClick below:\n{session.url}",
-        parse_mode="Markdown",
+        "💳 *Stripe Checkout*\n\n"
+        "Use the secure link below to complete your payment:\n"
+        f"{session.url}",
+        parse_mode=ParseMode.MARKDOWN,
     )
 
-async def show_paynow_cart(update, context, total):
-    q = update.callback_query
-    uid = update.effective_user.id
 
+async def show_paynow_cart(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
+    """
+    Fake PayNow QR for the entire cart.
+    """
+    q = update.callback_query
     qr = generate_paynow_qr(float(total), "Cart Checkout")
 
     kb = InlineKeyboardMarkup([
@@ -219,82 +260,97 @@ async def show_paynow_cart(update, context, total):
 
     await q.message.reply_photo(
         photo=InputFile(qr, filename="cart_paynow.png"),
-        caption=f"Pay *${float(total):.2f}*",
-        parse_mode="Markdown",
-        reply_markup=kb
+        caption=(
+            "🇸🇬 *Demo PayNow – Cart*\n\n"
+            f"Amount: *${float(total):.2f}*\n\n"
+            "_After test payment, tap **I HAVE PAID** to continue._"
+        ),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb,
     )
+
+
+async def show_nets_cart(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
+    """
+    NETS QR (sandbox) for the entire cart.
+    Expects modules.nets_qr.generate_nets_qr(amount) -> (BytesIO qr, ref_str)
+    """
+    from modules.nets_qr import generate_nets_qr
+
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    qr_img, ref = await generate_nets_qr(float(total))
+
+    # Generic "Cart Checkout" order
+    storage.add_order(uid, "Cart Checkout", 1, float(total), "NETS (sandbox)", 0)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
+        [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
+    ])
+
+    await q.message.reply_photo(
+        photo=InputFile(qr_img, filename=f"nets_cart_{ref}.png"),
+        caption=(
+            "🟦 *NETS QR – Cart (Sandbox)*\n\n"
+            f"Total: *${float(total):.2f}*\n"
+            f"Ref: `{ref}`\n\n"
+            "_Scan with the NETS sandbox app and tap **I PAID** to continue._"
+        ),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb,
+    )
+
 
 # ---------------- SEARCH PROMPT ----------------
 async def ask_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     context.user_data["awaiting_search"] = True
-    await q.edit_message_text("Send the product name to search.")
+    await q.edit_message_text(
+        "🔍 Send the *product name* you want to search for.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
-# ---------------- SEARCH RESULT DISPLAY ----------------
+
 async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE, results):
     msg = update.effective_message
 
     if not results:
-        await msg.reply_text("No products found.")
+        await msg.reply_text("No products found for that search 🔎")
         return
 
     text_lines = []
     rows = []
 
     for it in results:
-        text_lines.append(f"{it.get('emoji','🛒')} *{it['name']}* — ${it['price']:.2f}")
+        text_lines.append(
+            f"{it.get('emoji','🛒')} *{it['name']}* — `${it['price']:.2f}`"
+        )
         rows.append([
-            InlineKeyboardButton(f"Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+            InlineKeyboardButton(f"Buy `${it['price']:.2f}`", callback_data=f"buy:{it['sku']}:1"),
             InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
-            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}")
+            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
         ])
 
-    rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")])
 
     await msg.reply_text(
-        "Search results:\n\n" + "\n".join(text_lines),
+        "🔍 *Search Results*\n\n" + "\n".join(text_lines),
         reply_markup=InlineKeyboardMarkup(rows),
         parse_mode=ParseMode.MARKDOWN,
     )
 
-# ---------------- PAYNOW / STRIPE FOR SINGLE PURCHASE ----------------
-def generate_paynow_qr(amount: float, item_name: str, order_id: str = None) -> BytesIO:
-    """
-    Create a QR image pointing to fake PayNow gateway.
-    """
-    import time, random
-    from urllib.parse import urlencode
 
-    # Create order id if missing
-    if order_id is None:
-        order_id = f"O{int(time.time())}{random.randint(100,999)}"
-
-    # build fake pay URL
-    qs = urlencode({
-        "order": order_id,
-        "item": item_name,
-        "amount": f"{amount:.2f}"
-    })
-    url = VERCEL_PAY_URL.rstrip("/") + "/?" + qs
-
-    # make QR
-    img = qrcode.make(url)
-    bio = BytesIO()
-    img.save(bio, "PNG")
-    bio.seek(0)
-
-    # Attach useful metadata
-    bio.order_id = order_id
-    bio.url = url
-    return bio
-
-async def create_stripe_checkout(update, context, sku, qty):
+# ---------------- PAYMENTS: SINGLE ITEM ----------------
+async def create_stripe_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
     item = get_any_product_by_sku(sku)
     if not item:
-        return await update.callback_query.answer("Item missing", show_alert=True)
+        return await update.callback_query.answer("Item is no longer available.", show_alert=True)
 
     qty = clamp_qty(qty)
-    total = int(item["price"] * 100)
+    unit_cents = int(float(item["price"]) * 100)
 
     try:
         session = stripe.checkout.Session.create(
@@ -303,9 +359,9 @@ async def create_stripe_checkout(update, context, sku, qty):
                 "price_data": {
                     "currency": "usd",
                     "product_data": {"name": item["name"]},
-                    "unit_amount": total,
+                    "unit_amount": unit_cents,
                 },
-                "quantity": qty
+                "quantity": qty,
             }],
             mode="payment",
             success_url="https://example.com/success",
@@ -314,137 +370,211 @@ async def create_stripe_checkout(update, context, sku, qty):
     except Exception as e:
         return await update.callback_query.edit_message_text(f"Stripe error: `{e}`")
 
-    storage.add_order(update.effective_user.id, item["name"], qty, item["price"] * qty, "Stripe", item["seller_id"])
-    await update.callback_query.edit_message_text(
-        f"💳 **Pay with Stripe**\nClick below:\n{session.url}", parse_mode="Markdown"
+    total = float(item["price"]) * qty
+    storage.add_order(
+        update.effective_user.id,
+        item["name"],
+        qty,
+        total,
+        "Stripe",
+        int(item.get("seller_id", 0)),
     )
 
-import uuid
+    await update.callback_query.edit_message_text(
+        "💳 *Stripe Checkout*\n\n"
+        f"Item: *{item['name']}* x{qty}\n"
+        f"Total: *${total:.2f}*\n\n"
+        "Use the link below to complete payment:\n"
+        f"{session.url}",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
-async def show_paynow(update, context, sku: str, qty: int):
+
+async def show_paynow(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
     """
-    Called when user chooses PayNow QR. Generates a dummy gateway link + QR and
-    sends a nice message with buttons:
-    - ✅ I HAVE PAID  -> buyer clicks after "pretend pay"
-    - ❌ Cancel
+    Fake PayNow flow for a single item.
     """
     q = update.callback_query
     user_id = update.effective_user.id
 
-    # lookup item
     item = get_any_product_by_sku(sku)
     if not item:
-        await q.answer("Item not found.", show_alert=True)
-        return
+        return await q.answer("Item not found.", show_alert=True)
 
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
 
-    # create an order record (pending) and get a local order id
-    # you probably already have add_order; reuse it to record order
-    # We'll also create a unique order id for the fake gateway
     import time, random
     order_ref = f"ORD{int(time.time())}{random.randint(100,999)}"
-    storage.add_order(user_id, item["name"], qty, total, "PayNow (fake)", int(item.get("seller_id", 0)))
-    # (optionally, you might want to embed order_ref into stored order; adjust add_order if needed)
 
-    # generate QR that points to the Vercel fake gateway
+    storage.add_order(
+        user_id,
+        item["name"],
+        qty,
+        total,
+        "PayNow (fake)",
+        int(item.get("seller_id", 0)),
+    )
+
     qr = generate_paynow_qr(total, item["name"], order_ref)
 
-    # buttons for the flow (I HAVE PAID should trigger an admin/process flow)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ I HAVE PAID", callback_data=f"payconfirm:{order_ref}")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{order_ref}")],
-        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
+        [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
     ])
 
     caption = (
-        f"🇸🇬 *FAKE PayNow — Test Mode*\n\n"
+        "🇸🇬 *Demo PayNow – Single Item*\n\n"
         f"*Item:* {item['name']}\n"
         f"*Qty:* {qty}\n"
         f"*Amount:* ${total:.2f}\n\n"
-        f"Scan the QR or open: `{qr.url}`\n\n"
-        "This is a demo gateway — click *I HAVE PAID* after you 'pretend pay'."
+        f"`{qr.url}`\n\n"
+        "_Scan the QR (demo) and tap **I HAVE PAID** to move funds into escrow._"
     )
 
-    # send QR as an image with caption + buttons
     try:
         await q.message.reply_photo(
             photo=InputFile(qr, filename=f"paynow_{order_ref}.png"),
             caption=caption,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=kb
+            reply_markup=kb,
         )
     except Exception:
-        # fallback: send url and buttons if sending image fails
         await q.edit_message_text(
-            f"{caption}\n\nQR could not be sent; open the link instead: {qr.url}",
+            caption + "\n\n(QR image could not be sent, use the link instead.)",
             reply_markup=kb,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
         )
 
-    # done — later your callback_router should handle payconfirm: and paycancel:
+
+async def show_nets_qr(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
+    """
+    NETS QR (sandbox) for a single item.
+    Expects modules.nets_qr.generate_nets_qr(amount) -> (BytesIO qr, ref_str)
+    """
+    from modules.nets_qr import generate_nets_qr
+
+    q = update.callback_query
+    user_id = update.effective_user.id
+
+    item = get_any_product_by_sku(sku)
+    if not item:
+        return await q.answer("Item not found.", show_alert=True)
+
+    qty = clamp_qty(qty)
+    total = float(item["price"]) * qty
+
+    qr_img, ref = await generate_nets_qr(total)
+
+    storage.add_order(
+        user_id,
+        item["name"],
+        qty,
+        total,
+        "NETS (sandbox)",
+        int(item.get("seller_id", 0)),
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
+        [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
+    ])
+
+    await q.message.reply_photo(
+        photo=InputFile(qr_img, filename=f"nets_{ref}.png"),
+        caption=(
+            "🟦 *NETS QR – Sandbox*\n\n"
+            f"*Item:* {item['name']} x{qty}\n"
+            f"*Amount:* ${total:.2f}\n"
+            f"*Ref:* `{ref}`\n\n"
+            "_Scan with the NETS sandbox app and tap **I PAID** to move funds into escrow._"
+        ),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb,
+    )
 
 
-
-# ---------------- MENU ROUTER ----------------
 # ---------------- MENU ROUTER ----------------
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     _, tab = q.data.split(":", 1)
     uid = update.effective_user.id
 
-    # universal safe editor (supports photo captions)
-    async def safe_edit(text, kb):
+    async def safe_edit(text: str, kb: InlineKeyboardMarkup):
         try:
-            return await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-        except:
+            return await q.edit_message_text(
+                text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception:
             try:
-                return await q.edit_message_caption(text, reply_markup=kb, parse_mode="Markdown")
-            except:
-                return await context.bot.send_message(chat_id=uid, text=text, reply_markup=kb, parse_mode="Markdown")
+                return await q.edit_message_caption(
+                    text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception:
+                return await context.bot.send_message(
+                    chat_id=uid,
+                    text=text,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
 
     if tab == "shop":
         txt, kb = build_shop_keyboard()
         return await safe_edit(txt, kb)
-    
+
     if tab == "cart":
         return await shopping_cart.view_cart(update, context)
 
-    
     if tab == "wallet":
         bal = storage.get_balance(uid)
         pub = wallet.ensure_user_wallet(uid)["public_key"]
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Deposit", callback_data="wallet:deposit")],
             [InlineKeyboardButton("📤 Withdraw", callback_data="wallet:withdraw")],
-            [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")],
+            [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
         ])
-        return await safe_edit(f"💼 *Wallet*\nFiat: ${bal:.2f}\nSolana: `{pub}`\n", kb)
+        return await safe_edit(
+            "💼 *Wallet Overview*\n\n"
+            f"• Fiat: `${bal:.2f}`\n"
+            f"• Solana Address:\n`{pub}`",
+            kb,
+        )
 
     if tab == "messages":
         threads = storage.load_json(storage.MESSAGES_FILE)
-        btns = [[InlineKeyboardButton(f"💬 {v['product']['name']}", callback_data=f"chat:open:{k}")]
-                for k, v in threads.items() if uid in (v.get("buyer_id"), v.get("seller_id"))]
-        btns.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
-        txt = "💌 *Your Chats*:\n" if len(btns) > 1 else "No chats yet."
+        btns = [
+            [InlineKeyboardButton(f"💬 {v['product']['name']}", callback_data=f"chat:open:{k}")]
+            for k, v in threads.items()
+            if uid in (v.get("buyer_id"), v.get("seller_id"))
+        ]
+        btns.append([InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")])
+        txt = (
+            "💌 *Your Conversations*\n\n_Select a thread to re-open._"
+            if len(btns) > 1
+            else "No chats yet."
+        )
         return await safe_edit(txt, InlineKeyboardMarkup(btns))
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
         return await safe_edit(txt, kb)
 
+    if tab == "functions":
+        return await show_functions_menu(update, context)
+
     if tab in ("main", "refresh"):
         kb, txt = build_main_menu(storage.get_balance(uid))
         return await safe_edit(txt, kb)
 
+
 # ===================== CART ACTION HANDLERS =====================
 
-# ===========================
-# SHOP BUY / QTY / CHECKOUT
-# ===========================
-
 async def on_buy(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
+    """
+    Single item buy screen – choose payment rail.
+    """
     q = update.callback_query
     item = get_any_product_by_sku(sku)
     if not item:
@@ -454,22 +584,26 @@ async def on_buy(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, q
     total = float(item["price"]) * qty
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay with Stripe", callback_data=f"stripe:{sku}:{qty}")],
-        [InlineKeyboardButton("🇸🇬 PayNow QR", callback_data=f"paynow:{sku}:{qty}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="back_to_shop")]
+        [InlineKeyboardButton("💳 Stripe (Card)", callback_data=f"stripe:{sku}:{qty}")],
+        [InlineKeyboardButton("🇸🇬 PayNow QR (Demo)", callback_data=f"paynow:{sku}:{qty}")],
+        [InlineKeyboardButton("🟦 NETS QR (Sandbox)", callback_data=f"nets:{sku}:{qty}")],
+        [InlineKeyboardButton("🔙 Back to Shop", callback_data="back_to_shop")],
     ])
 
     txt = (
         f"{item.get('emoji','🛒')} *{item['name']}*\n"
-        f"Qty: {qty}\n"
+        f"Qty: *{qty}*\n"
         f"Total: *${total:.2f}*\n\n"
-        "Choose a payment method:"
+        "_Select a payment method to continue:_"
     )
 
     await q.edit_message_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
 
 
 async def on_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
+    """
+    Quantity adjuster UI before checkout.
+    """
     q = update.callback_query
     item = get_any_product_by_sku(sku)
     if not item:
@@ -482,89 +616,115 @@ async def on_qty(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, q
         [
             InlineKeyboardButton("−", callback_data=f"qty:{sku}:{qty-1}"),
             InlineKeyboardButton(f"Qty: {qty}", callback_data="noop"),
-            InlineKeyboardButton("+", callback_data=f"qty:{sku}:{qty+1}")
+            InlineKeyboardButton("+", callback_data=f"qty:{sku}:{qty+1}"),
         ],
         [InlineKeyboardButton("✅ Checkout", callback_data=f"checkout:{sku}:{qty}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="back_to_shop")]
+        [InlineKeyboardButton("🔙 Back to Shop", callback_data="back_to_shop")],
     ])
 
     txt = (
         f"{item.get('emoji','🛒')} *{item['name']}*\n"
-        f"Price: ${item['price']:.2f}\n"
-        f"Qty: {qty}\n"
+        f"Price: `${item['price']:.2f}`\n"
+        f"Qty: *{qty}*\n"
         f"Total: *${total:.2f}*\n\n"
-        "Adjust quantity or checkout:"
+        "_Adjust quantity, then confirm checkout._"
     )
 
     await q.edit_message_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
 
-async def show_post_payment_options(chat_id, context, order_id, seller_id):
+
+async def on_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
+    """
+    On "Checkout" from qty selector → reopen on_buy with that qty.
+    """
+    await on_buy(update, context, sku, qty)
+
+
+async def show_post_payment_options(
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    order_id: str,
+    seller_id: int,
+):
+    """
+    After payment confirmed + funds in escrow, show post-payment control
+    to buyer and notify seller.
+    """
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📦 I Have Shipped", callback_data=f"ship:{order_id}")],
         [InlineKeyboardButton("✅ I Received My Item", callback_data=f"recv:{order_id}")],
-        [InlineKeyboardButton("❗ Report Issue", callback_data=f"dispute:{order_id}")]
+        [InlineKeyboardButton("❗ Report Issue", callback_data=f"dispute:{order_id}")],
     ])
 
+    # Notify buyer
     await context.bot.send_message(
         chat_id,
-        f"🛒 Order **{order_id}** is now in ESCROW.\n\n"
-        f"Seller will ship your item.\nFunds are held securely.",
+        f"💠 *Order `{order_id}` is now in escrow.*\n\n"
+        "Seller will ship your item. Once you receive it, confirm to release funds.",
         reply_markup=kb,
-        parse_mode="Markdown"
+        parse_mode=ParseMode.MARKDOWN,
     )
 
+    # Optional: notify seller (if info is available)
+    try:
+        order = storage.get_order(order_id)
+        seller_id = int(order.get("seller_id", seller_id))
+        if seller_id:
+            await context.bot.send_message(
+                seller_id,
+                f"📦 New paid order in escrow: `{order_id}`.\n"
+                "Ship the item and keep the buyer updated in chat.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+    except Exception:
+        pass
 
-async def on_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
-    # Checkout simply returns to on_buy screen
-    await on_buy(update, context, sku, qty)
 
 # ===========================
 # ESCROW PAY CONFIRM HANDLERS
 # ===========================
-
-async def handle_pay_confirm(update, context, order_id):
-    from modules import storage
+async def handle_pay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    """
+    When buyer taps "I HAVE PAID" / "I PAID", move order into escrow_hold state.
+    """
     q = update.callback_query
-    
-    # Update order status to escrow_hold
+
     storage.update_order_status(order_id, "escrow_hold")
 
     msg = (
-        f"✅ *Payment Confirmed!*\n"
-        f"Order `{order_id}` has been placed.\n"
-        f"Funds are now held securely in escrow.\n\n"
-        f"📦 Seller will ship your item soon."
+        "✅ *Payment Confirmed*\n\n"
+        f"Order `{order_id}` is now *secured in escrow*.\n"
+        "The seller will ship your item next."
     )
 
-    # Attempt to edit message first (works when callback pressed inside Telegram)
     try:
-        await q.edit_message_text(msg, parse_mode="Markdown")
-    except:
-        # If editing fails (like returning from Vercel), send a new message instead
+        await q.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception:
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text=msg,
-            parse_mode="Markdown"
+            parse_mode=ParseMode.MARKDOWN,
         )
 
 
-async def handle_pay_cancel(update, context, order_id):
+async def handle_pay_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
 
-    msg = "❌ Payment cancelled. Your order has been discarded."
+    msg = "❌ Payment cancelled. The order has been discarded."
 
     try:
         await q.edit_message_text(msg)
-    except:
+    except Exception:
         await context.bot.send_message(update.effective_user.id, msg)
 
 
 # ===========================
 # ESCROW FLOW CONTINUATION
 # ===========================
-
-async def handle_mark_shipped(update, context, order_id):
-    from modules import storage
+async def handle_mark_shipped(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    """
+    Seller marks order as shipped.
+    """
     q = update.callback_query
     order = storage.get_order(order_id)
 
@@ -574,19 +734,24 @@ async def handle_mark_shipped(update, context, order_id):
     try:
         await context.bot.send_message(
             order["buyer_id"],
-            f"📦 Your seller has marked order `{order_id}` as shipped!\n\nPlease confirm once received."
+            f"📦 *Order `{order_id}` marked as shipped.*\n\n"
+            "Once you receive your item, confirm to release payment.",
+            parse_mode=ParseMode.MARKDOWN,
         )
-    except:
+    except Exception:
         pass
 
-    msg = f"✅ Order `{order_id}` marked as shipped."
+    msg = f"✅ Order `{order_id}` set to *shipped*."
     try:
         await q.edit_message_text(msg)
-    except:
+    except Exception:
         await q.message.reply_text(msg)
 
-async def handle_release_payment(update, context, order_id):
-    from modules import storage
+
+async def handle_release_payment(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    """
+    Buyer confirms receipt → release funds to seller.
+    """
     q = update.callback_query
     order = storage.get_order(order_id)
 
@@ -596,109 +761,174 @@ async def handle_release_payment(update, context, order_id):
     try:
         await context.bot.send_message(
             order["seller_id"],
-            f"💰 Buyer confirmed receipt!\nPayment released for order `{order_id}` ✅"
+            f"💰 *Payment released* for order `{order_id}`.\n"
+            "Thank you for using the marketplace.",
+            parse_mode=ParseMode.MARKDOWN,
         )
-    except:
+    except Exception:
         pass
 
-    msg = f"🎉 Payment released for order `{order_id}`!\nHope you enjoy your item!"
+    msg = (
+        f"🎉 *Payment Released*\n\n"
+        f"Escrow for order `{order_id}` has been closed.\n"
+        "Enjoy your item!"
+    )
     try:
-        await q.edit_message_text(msg)
-    except:
+        await q.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception:
         await q.message.reply_text(msg)
 
-async def handle_dispute_case(update, context, order_id):
-    from modules import storage
+
+async def handle_dispute_case(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    """
+    Buyer opens a dispute for an order in escrow.
+    """
     q = update.callback_query
     order = storage.get_order(order_id)
 
     storage.update_order_status(order_id, "disputed")
 
-    # Notify admins (Escrow team)
-    ADMIN_ID = 123456789  # replace with your Telegram ID
+    # Notify admin
     try:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"🚨 DISPUTE OPENED\nOrder `{order_id}`\nBuyer: `{order['buyer_id']}`\nSeller: `{order['seller_id']}`"
-        )
-    except:
+        if ADMIN_ID:
+            await context.bot.send_message(
+                ADMIN_ID,
+                "🚨 *Dispute Opened*\n\n"
+                f"Order: `{order_id}`\n"
+                f"Item: {order['item']}\n"
+                f"Buyer: `{order['buyer_id']}`\n"
+                f"Seller: `{order['seller_id']}`\n",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+    except Exception:
         pass
 
-    msg = f"⚠️ Dispute opened for order `{order_id}`.\nAdmin will review."
+    msg = (
+        f"⚠️ *Dispute opened* for order `{order_id}`.\n\n"
+        "An admin will review this case and decide how to resolve the funds in escrow."
+    )
     try:
-        await q.edit_message_text(msg)
-    except:
+        await q.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception:
         await q.message.reply_text(msg)
+
 
 # ===========================================================
 # ✅ ADMIN DISPUTE PANEL
 # ===========================================================
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-import modules.storage as storage
-import os
-
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-
-async def admin_open_disputes(update, context):
+async def admin_open_disputes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
 
     if uid != ADMIN_ID:
-        return await q.answer("🚫 Admin Only")
+        return await q.answer("🚫 Admin only.", show_alert=True)
 
     disputes = storage.get_all_disputed_orders()
 
     if not disputes:
         return await q.edit_message_text(
-            "✅ No active disputes",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]])
+            "✅ No active disputes at the moment.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")]]
+            ),
         )
 
     text = "⚠️ *Active Disputes*\n\n"
     buttons = []
 
     for oid, o in disputes.items():
-        text += f"• {o['item']} — ${o['amount']:.2f}\n"
-        text += f"Buyer: `{o['buyer_id']}` | Seller: `{o['seller_id']}`\n"
-        text += f"Status: `{o['status']}`\n\n"
+        text += (
+            f"• `{oid}` — {o['item']} — `${o['amount']:.2f}`\n"
+            f"  Buyer: `{o['buyer_id']}` | Seller: `{o['seller_id']}`\n"
+            f"  Status: `{o['status']}`\n\n"
+        )
 
         buttons.append([
             InlineKeyboardButton("✅ Refund Buyer", callback_data=f"admin_refund:{oid}"),
-            InlineKeyboardButton("💰 Pay Seller", callback_data=f"admin_release:{oid}")
+            InlineKeyboardButton("💰 Pay Seller", callback_data=f"admin_release:{oid}"),
         ])
 
-    buttons.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
+    buttons.append([InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")])
 
-    await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    await q.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
-async def admin_refund(update, context, order_id):
+async def admin_refund(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
     storage.update_order_status(order_id, "cancelled")
 
     o = storage.get_order(order_id)
     storage.update_balance(o["buyer_id"], o["amount"])
 
-    await context.bot.send_message(o["buyer_id"], f"✅ Admin refunded your purchase of *{o['item']}*")
-    await context.bot.send_message(o["seller_id"], f"⚠️ Your buyer was refunded for *{o['item']}*")
+    await context.bot.send_message(
+        o["buyer_id"],
+        f"✅ *Refund Approved* for your purchase of *{o['item']}*.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    await context.bot.send_message(
+        o["seller_id"],
+        f"⚠️ Buyer was refunded for *{o['item']}* by admin decision.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
-    await q.edit_message_text("✅ Buyer refunded, order cancelled",
-                              parse_mode=ParseMode.MARKDOWN,
-                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]))
+    await q.edit_message_text(
+        "✅ Buyer refunded and order cancelled.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")]]
+        ),
+    )
 
 
-async def admin_release(update, context, order_id):
+async def admin_release(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
     storage.update_order_status(order_id, "released")
 
     o = storage.get_order(order_id)
     storage.update_balance(o["seller_id"], o["amount"])
 
-    await context.bot.send_message(o["buyer_id"], f"⚠️ Admin released funds to seller for *{o['item']}*")
-    await context.bot.send_message(o["seller_id"], f"💰 Funds released to you for *{o['item']}*")
+    await context.bot.send_message(
+        o["buyer_id"],
+        f"⚠️ Admin released funds to the seller for *{o['item']}*.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    await context.bot.send_message(
+        o["seller_id"],
+        f"💰 *Payout Released* for order `{order_id}`.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
-    await q.edit_message_text("💰 Seller paid",
-                              parse_mode=ParseMode.MARKDOWN,
-                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]]))
+    await q.edit_message_text(
+        "💰 Seller has been paid.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")]]
+        ),
+    )
+
+
+# ===========================================================
+# FUNCTIONS MENU (UTILITY PANEL)
+# ===========================================================
+async def show_functions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Simple functions / utilities menu – extend with more tools later.
+    """
+    q = update.callback_query
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 View Disputes (Admin)", callback_data="admin:disputes")],
+        [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
+    ])
+
+    txt = (
+        "⚙️ *Functions Panel*\n\n"
+        "Utilities and admin tools for the marketplace.\n"
+        "More controls can be added here later (reports, analytics, etc.)."
+    )
+
+    await q.edit_message_text(txt, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
