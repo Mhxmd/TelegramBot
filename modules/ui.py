@@ -119,34 +119,41 @@ def search_products_by_name(query: str):
 # ---------------- MAIN MENU ----------------
 def build_main_menu(balance: float):
     """
-    Main landing menu – premium black/blue fintech tone.
+    Xchange — (Home Dashboard)
     """
+    card = f"💳 *Balance:* `${balance:.2f}`"
+
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🛍️ Marketplace", callback_data="menu:shop"),
+            InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop"),
             InlineKeyboardButton("📦 Orders", callback_data="menu:orders"),
+        ],
+        [
             InlineKeyboardButton("🛒 Cart", callback_data="cart:view"),
-        ],
-        [
             InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet"),
+        ],
+        [
             InlineKeyboardButton("🛠 Sell", callback_data="menu:sell"),
+            InlineKeyboardButton("✉ Messages", callback_data="menu:messages"),
         ],
         [
-            InlineKeyboardButton("💬 Public Lounge", callback_data="chat:public_open"),
-            InlineKeyboardButton("✉️ Direct Messages", callback_data="menu:messages"),
+            InlineKeyboardButton("💬 Lounge", callback_data="chat:public_open"),
+            InlineKeyboardButton("⚙ Functions", callback_data="menu:functions"),
         ],
-        [
-            InlineKeyboardButton("⚙️ Functions", callback_data="menu:functions"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh"),
-        ],
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")],
     ])
+
     txt = (
-        "✨ *NovaMart – Telegram Escrow Marketplace*\n\n"
-        f"💰 *Fiat Balance:* `${balance:.2f}`\n"
-        "──\n"
-        "_Browse, trade and chat in a secure escrow environment._"
+        "🌀 *Xchange — Secure Escrow Marketplace*\n"
+        "══════════════════════\n"
+        f"{card}\n"
+        "══════════════════════\n"
+        "_Buy • Sell • Escrow • Trade Safely_\n"
+        "Trusted peer-to-peer marketplace inside Telegram.\n"
     )
+
     return kb, txt
+
 
 
 # ---------------- SHOP UI ----------------
@@ -156,27 +163,25 @@ def build_shop_keyboard():
 
     for it in items:
         text_lines.append(
-            f"{it.get('emoji','🛒')} *{it['name']}* — `${it['price']:.2f}`"
+            f"{it.get('emoji','🛍')} *{it['name']}* — `${it['price']:.2f}`"
         )
-
         rows.append([
-            InlineKeyboardButton(f"Buy `${it['price']:.2f}`", callback_data=f"buy:{it['sku']}:1"),
-            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
-            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
+            InlineKeyboardButton(f"💰 Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
+            InlineKeyboardButton("➕ Cart", callback_data=f"cart_add:{it['sku']}"),
+            InlineKeyboardButton("💬 Chat Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
         ])
 
-    rows.append([InlineKeyboardButton("🔍 Search", callback_data="shop:search")])
-    rows.append([InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton("🔍 Search Items", callback_data="shop:search")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
 
-    if text_lines:
-        text = "🛍️ *Marketplace Listings*\n\n" + "\n".join(text_lines)
-    else:
-        text = (
-            "🛍️ *Marketplace Listings*\n\n"
-            "_No listings yet. Be the first to sell something._"
-        )
+    text = (
+        "🛍 **Xchange Marketplace**\n"
+        "Browse products or list your own.\n\n"
+        + ("\n".join(text_lines) if text_lines else "_No items yet — be the first to sell._")
+    )
 
     return text, InlineKeyboardMarkup(rows)
+
 
 
 # ========================================================
@@ -536,11 +541,14 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")],
         ])
         return await safe_edit(
-            "💼 *Wallet Overview*\n\n"
-            f"• Fiat: `${bal:.2f}`\n"
-            f"• Solana Address:\n`{pub}`",
-            kb,
-        )
+        "💼 **Wallet — Xchange Account**\n"
+        "───────────────\n"
+        f"• Fiat Balance: `${bal:.2f}`\n"
+        f"• Solana Wallet:\n`{pub}`\n\n"
+        "_Use deposit/withdraw to move funds in or out._",
+        kb,
+    )
+
 
     if tab == "messages":
         threads = storage.load_json(storage.MESSAGES_FILE)

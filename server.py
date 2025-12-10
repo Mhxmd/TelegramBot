@@ -2,171 +2,155 @@ import os
 import json
 import logging
 import pathlib
-import stripe                        
+import stripe
 from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
 
-
-# Absolute path to this folder
+# ===========================================
+# 🔧 Load ENV & Base Paths
+# ===========================================
 BASE_DIR = pathlib.Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
-# Force load .env from this exact folder
-env_path = BASE_DIR / ".env"
-load_dotenv(dotenv_path=env_path)
-
-# Debug print
-print("DEBUG STRIPE_SECRET_KEY  =", repr(os.getenv("STRIPE_SECRET_KEY")))
-print("DEBUG WEBHOOK_SECRET     =", repr(os.getenv("STRIPE_WEBHOOK_SECRET")))
-
-# ==========================
-# ⚙️ CONFIGURATION
-# ==========================
-load_dotenv()
-
-# Stripe secret key
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 
 stripe.api_key = STRIPE_SECRET_KEY
 
-# Local data files (optional for wallet or order tracking)
-BALANCE_FILE = "balances.json"
+# JSON files (Bot also uses these)
 ORDERS_FILE = "orders.json"
+BALANCE_FILE = "balances.json"
 
 app = FastAPI()
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("server")
+log = logging.getLogger("server")
 
-# ==========================
-# 🧠 Helper Functions
-# ==========================
+
+# ===========================================
+# JSON Helpers
+# ===========================================
 def load_json(file):
-    """Load a JSON file safely."""
     if not os.path.exists(file):
         return {}
     with open(file, "r") as f:
         return json.load(f)
 
 def save_json(file, data):
-    """Save data back to a JSON file."""
     with open(file, "w") as f:
         json.dump(data, f, indent=2)
 
-# ==========================
-# 🛒 Checkout Endpoint
-# Used when creating Stripe checkout links (for testing)
-# ==========================
+
+# ===========================================
+# Create Checkout Session (Optional API)
+# ===========================================
 @app.post("/create_checkout_session")
 async def create_checkout_session(request: Request):
-    data = await request.json()
+    req = await request.json()
 
-    order_id = data["order_id"]
-    amount = int(float(data["amount"]) * 100)  # Convert to cents
-    user_id = data["user_id"]  # Telegram user ID
+    order_id = str(req["order_id"])
+    user_id = str(req["user_id"])
+    amount = int(float(req["amount"]) * 100)  # to cents
 
     try:
         session = stripe.checkout.Session.create(
             payment_method_types=["card", "paynow"],
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "sgd",
-                        "product_data": {"name": f"Order #{order_id}"},
-                        "unit_amount": amount,
-                    },
-                    "quantity": 1,
-                }
-            ],
+            line_items=[{
+                "price_data": {
+                    "currency": "sgd",
+                    "product_data": {"name": f"Order #{order_id}"},
+                    "unit_amount": amount,
+                },
+                "quantity": 1,
+            }],
             mode="payment",
-            success_url="https://yourdomain.com/success",
-            cancel_url="https://yourdomain.com/cancel",
+            success_url="https://your-domain.com/success",
+            cancel_url="https://your-domain.com/cancel",
             metadata={
                 "type": "escrow_payment",
-                "order_id": str(order_id),
-                "user_id": str(user_id),
+                "order_id": order_id,
+                "user_id": user_id
             },
         )
-
         return {"checkout_url": session.url, "session_id": session.id}
 
     except Exception as e:
-        logger.error(f"Stripe error: {e}")
+        log.error(f"Stripe error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ==========================
-# 📡 Stripe Webhook Listener
-# Triggered automatically by Stripe after payment
-# ==========================
+
+# ===========================================
+# 📡 Stripe Webhook — Auto Detect Payment
+# ===========================================
 @app.post("/webhook")
 async def webhook_received(request: Request):
-    """
-    Stripe webhook endpoint to verify and handle payment events.
-    """
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
+    sig = request.headers.get("stripe-signature")
 
+    # 🔐 Signature Verification
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
+            payload, sig, STRIPE_WEBHOOK_SECRET
         )
     except Exception as e:
-        logger.error(f"⚠️ Webhook verification failed: {e}")
+        log.error("⚠️ Invalid Webhook Signature:", e)
         raise HTTPException(status_code=400, detail=str(e))
 
-        # ✅ Payment completed
+    # ===============================
+    # When Payment is Completed
+    # ===============================
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-        logger.info(f"✅ Payment received for {session['amount_total']/100:.2f} {session['currency'].upper()}")
-        logger.info(f"Session ID: {session['id']} | Customer Email: {session.get('customer_email')}")
-
-        # ========================================
-        # 🔒 ESCROW PAYMENT HANDLING (INSERT HERE)
-        # ========================================
         metadata = session.get("metadata", {})
+        order_type = metadata.get("type")
 
-        if metadata.get("type") == "escrow_payment":
+        log.info(f"💳 Stripe Payment Completed — Session {session['id']}")
+
+        # -------------------------------------------------
+        # 1) Escrow Purchase Payment
+        # -------------------------------------------------
+        if order_type == "escrow_payment":
             order_id = metadata.get("order_id")
             user_id = metadata.get("user_id")
 
             orders = load_json(ORDERS_FILE)
+            modified = False
 
-            for uid, user_orders in orders.items():
-                for order in user_orders:
-                    if str(order.get("id")) == str(order_id):
-                        order["status"] = "Paid"
-                        order["stripe_session_id"] = session["id"]
-                        save_json(ORDERS_FILE, orders)
-                        logger.info(f"💰 Order {order_id} marked as PAID via Stripe")
+            # Search & update the order status
+            for uid, order_list in orders.items():
+                for o in order_list:
+                    if str(o.get("id")) == order_id:
+                        o["status"] = "Paid (Escrow)"
+                        o["stripe_session_id"] = session["id"]
+                        modified = True
 
-            # (Optional) notify Telegram bot here
-            # e.g. send HTTP POST to bot webhook to inform the buyer + seller
+            if modified:
+                save_json(ORDERS_FILE, orders)
+                log.info(f"🔒 Escrow Payment Locked for Order {order_id}")
 
-    if session.get("metadata", {}).get("type") == "wallet_topup":
-        user_id = int(session["metadata"]["user_id"])
-        amount = session["amount_total"] / 100
-        balances = load_json(BALANCE_FILE)
-        balances[str(user_id)] = round(balances.get(str(user_id), 0) + amount, 2)
-        save_json(BALANCE_FILE, balances)
-        logger.info(f"💰 Wallet topped up for user {user_id} (+${amount:.2f})")
+                # TODO — CALL TELEGRAM BOT HTTP ENDPOINT
+                # Example:
+                # requests.post("http://localhost:8000/bot/payment_confirm", json={"order_id": order_id})
 
+        # -------------------------------------------------
+        # 2) Wallet Top-up Payment
+        # -------------------------------------------------
+        elif order_type == "wallet_topup":
+            user_id = metadata.get("user_id")
+            amount = session["amount_total"] / 100  # convert from cents
 
-        # Optional: update local order or wallet here
-        orders = load_json(ORDERS_FILE)
-        for user_id, user_orders in orders.items():
-            for order in user_orders:
-                if order.get("stripe_session_id") == session["id"]:
-                    order["status"] = "Paid"
-                    save_json(ORDERS_FILE, orders)
-                    logger.info(f"💰 Order marked as paid for user {user_id}")
+            balance = load_json(BALANCE_FILE)
+            balance[user_id] = round(balance.get(user_id, 0) + amount, 2)
+            save_json(BALANCE_FILE, balance)
 
-    return {"status": "success"}
+            log.info(f"💰 Wallet Top-up +${amount:.2f} for User {user_id}")
 
-# ==========================
-# 🧩 How to Run
-# Run this server locally on port 4242:
+    return {"status": "ok"}
+
+# =============================================================
+# HOW TO RUN:
 # uvicorn server:app --reload --port 4242
 #
-# Then connect Stripe CLI:
+# Stripe Webhook Forwarding:
 # stripe listen --forward-to localhost:4242/webhook
-# ==========================
+# =============================================================
