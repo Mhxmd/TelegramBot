@@ -41,6 +41,7 @@ uvicorn server:app --reload --port 4242
 stripe listen --forward-to localhost:4242/webhook
 python bot.py
 
+pip install aiohttp
 
 ---
 
