@@ -37,6 +37,7 @@ scoop install git
 cd "C:\Users\user\Dropbox\My PC (LAPTOP-UC7E1S6T)\Desktop\RP Work\Y3S2\C300\TelegramBot-Escrow"
 uvicorn server:app --reload --port 4242
 
+The commands below here are for the stripe server
 uvicorn server:app --reload --port 4242
 stripe listen --forward-to localhost:4242/webhook
 python bot.py

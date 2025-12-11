@@ -349,50 +349,53 @@ async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ---------------- PAYMENTS: SINGLE ITEM ----------------
-async def create_stripe_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
+async def create_stripe_checkout(update, context, sku: str, qty: int):
+    import requests
+
     item = get_any_product_by_sku(sku)
     if not item:
-        return await update.callback_query.answer("Item is no longer available.", show_alert=True)
+        return await update.callback_query.answer("Item not found.", show_alert=True)
 
     qty = clamp_qty(qty)
-    unit_cents = int(float(item["price"]) * 100)
+    total = float(item["price"]) * qty
+    user_id = update.effective_user.id
+
+    order_id = f"{sku}_{user_id}"
 
     try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": item["name"]},
-                    "unit_amount": unit_cents,
-                },
-                "quantity": qty,
-            }],
-            mode="payment",
-            success_url="https://example.com/success",
-            cancel_url="https://example.com/cancel",
-        )
-    except Exception as e:
-        return await update.callback_query.edit_message_text(f"Stripe error: `{e}`")
+        # Request Stripe session from FastAPI server
+        res = requests.post(
+            os.getenv("SERVER_BASE_URL") + "/create_checkout_session",
+            json={
+                "order_id": order_id,
+                "amount": total,
+                "user_id": user_id
+            }
+        ).json()
 
-    total = float(item["price"]) * qty
+        checkout_url = res["checkout_url"]
+
+    except Exception as e:
+        return await update.callback_query.edit_message_text(f"Error: {e}")
+
+    # Save order into escrow
     storage.add_order(
-        update.effective_user.id,
+        user_id,
         item["name"],
         qty,
         total,
-        "Stripe",
-        int(item.get("seller_id", 0)),
+        "Stripe (Pending)",
+        int(item.get("seller_id", 0))
     )
 
     await update.callback_query.edit_message_text(
-        "💳 *Stripe Checkout*\n\n"
-        f"Item: *{item['name']}* x{qty}\n"
-        f"Total: *${total:.2f}*\n\n"
-        "Use the link below to complete payment:\n"
-        f"{session.url}",
-        parse_mode=ParseMode.MARKDOWN,
+        f"💳 *Stripe Checkout*\n\n"
+        f"*Item:* {item['name']} x{qty}\n"
+        f"*Total:* ${total:.2f}\n\n"
+        f"Click below to complete payment:\n{checkout_url}",
+        parse_mode="Markdown"
     )
+
 
 
 async def show_paynow(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str, qty: int):
