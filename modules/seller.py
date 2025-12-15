@@ -3,7 +3,7 @@ from telegram.constants import ParseMode
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from modules import storage
+from modules import storage,inventory
 
 
 def remove_seller_product(seller_id: int, sku: str):

@@ -18,7 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Modules
-from modules import storage, ui, chat, seller, shopping_cart
+from modules import storage, ui, chat, seller, shopping_cart,inventory
 import modules.wallet_utils as wallet
 
 
@@ -72,7 +72,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("buy:"):
             _, sku, qty = data.split(":")
-            return await ui.on_buy(update, context, sku, int(qty))
+            qty = int(qty)
+
+            ok, stock = inventory.check_stock(sku, qty)
+            if not ok:
+                return await q.answer(
+                    f"❌ Not enough stock.\nAvailable: {stock}",
+                    show_alert=True
+            )
+
+            return await ui.on_buy(update, context, sku, qty)
+
 
         if data.startswith("qty:"):
             _, sku, qty = data.split(":")
@@ -80,7 +90,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("checkout:"):
             _, sku, qty = data.split(":")
-            return await ui.on_checkout(update, context, sku, int(qty))
+            qty = int(qty)
+
+            ok, stock = inventory.check_stock(sku, qty)
+            if not ok:
+                return await q.answer(
+                f"❌ Insufficient stock.\nAvailable: {stock}",
+                show_alert=True
+            )
+
+            return await ui.on_checkout(update, context, sku, qty)
+
 
         if data.startswith("stripe:"):
             _, sku, qty = data.split(":")

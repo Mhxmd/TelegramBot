@@ -36,6 +36,7 @@ https://dashboard.stripe.com/acct_1SMVMKBZTDz6kN2e/auth_stripecli
 scoop install git
 cd "C:\Users\user\Dropbox\My PC (LAPTOP-UC7E1S6T)\Desktop\RP Work\Y3S2\C300\TelegramBot-Escrow"
 uvicorn server:app --reload --port 4242
+ngrok is a development tunnel, not a dependency
 
 The commands below here are for the stripe server
 uvicorn server:app --reload --port 4242

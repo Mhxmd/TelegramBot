@@ -8,7 +8,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Upda
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from modules import storage, seller, chat
+from modules import storage, seller, chat, inventory
 from modules import shopping_cart
 import modules.wallet_utils as wallet   # safe import
 
@@ -531,6 +531,38 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if tab == "shop":
         txt, kb = build_shop_keyboard()
         return await safe_edit(txt, kb)
+    
+    if tab == "orders":
+        orders = storage.get_user_orders(uid)
+
+        if not orders:
+            txt = "📦 *Your Orders*\n\n_No orders yet._"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")]
+            ])
+            return await safe_edit(txt, kb)
+
+        lines = []
+        buttons = []
+
+        for oid, o in orders.items():
+            lines.append(
+                f"• `{oid}` — *{o['item']}* — `${o['amount']:.2f}`\n"
+                f"  Status: `{o['status']}`"
+            )
+
+            buttons.append([
+                InlineKeyboardButton("🔍 View", callback_data=f"order:view:{oid}")
+            ])
+
+        buttons.append([
+            InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")
+        ])
+
+        txt = "📦 *Your Orders*\n\n" + "\n\n".join(lines)
+
+        return await safe_edit(txt, InlineKeyboardMarkup(buttons))
+
 
     if tab == "cart":
         return await shopping_cart.view_cart(update, context)
@@ -695,12 +727,19 @@ async def show_post_payment_options(
 # ESCROW PAY CONFIRM HANDLERS
 # ===========================
 async def handle_pay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
-    """
-    When buyer taps "I HAVE PAID" / "I PAID", move order into escrow_hold state.
-    """
     q = update.callback_query
 
+    # 1️⃣ Move order into escrow
     storage.update_order_status(order_id, "escrow_hold")
+
+    # 2️⃣ 🔽 DEDUCT STOCK HERE
+    order = storage.get_order(order_id)
+    if order:
+        sku = order.get("sku")
+        qty = int(order.get("qty", 1))
+
+        if sku:
+            inventory.deduct_stock(sku, qty)
 
     msg = (
         "✅ *Payment Confirmed*\n\n"
@@ -708,25 +747,22 @@ async def handle_pay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "The seller will ship your item next."
     )
 
-    try:
-        await q.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text=msg,
-            parse_mode=ParseMode.MARKDOWN,
-        )
+    await q.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 
 
 async def handle_pay_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
 
-    msg = "❌ Payment cancelled. The order has been discarded."
+    order = storage.get_order(order_id)
+    if order:
+        sku = order.get("sku")
+        qty = int(order.get("qty", 1))
+        if sku:
+            inventory.restore_stock(sku, qty)
 
-    try:
-        await q.edit_message_text(msg)
-    except Exception:
-        await context.bot.send_message(update.effective_user.id, msg)
+    msg = "❌ Payment cancelled. The order has been discarded."
+    await q.edit_message_text(msg)
 
 
 # ===========================
@@ -870,28 +906,21 @@ async def admin_open_disputes(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def admin_refund(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
-    storage.update_order_status(order_id, "cancelled")
-
     o = storage.get_order(order_id)
-    storage.update_balance(o["buyer_id"], o["amount"])
 
+    # 🔁 RESTORE STOCK
+    sku = o.get("sku")
+    qty = int(o.get("qty", 1))
+    if sku:
+        inventory.restore_stock(sku, qty)
+
+    storage.update_order_status(order_id, "cancelled")
+    storage.update_balance(o["buyer_id"], o["amount"])
     await context.bot.send_message(
         o["buyer_id"],
-        f"✅ *Refund Approved* for your purchase of *{o['item']}*.",
+        f"💸 *Refund Processed* for order *{o['item']}*.\n"
+        "The funds have been returned to your balance.",
         parse_mode=ParseMode.MARKDOWN,
-    )
-    await context.bot.send_message(
-        o["seller_id"],
-        f"⚠️ Buyer was refunded for *{o['item']}* by admin decision.",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-    await q.edit_message_text(
-        "✅ Buyer refunded and order cancelled.",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Back to Home", callback_data="menu:main")]]
-        ),
     )
 
 
