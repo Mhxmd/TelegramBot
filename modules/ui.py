@@ -1,6 +1,7 @@
 VERCEL_PAY_URL = "https://fake-paynow-yourname.vercel.app"
 
 import os
+from turtle import update
 import qrcode
 from io import BytesIO
 from dotenv import load_dotenv
@@ -243,12 +244,20 @@ async def stripe_cart_checkout(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         return await update.callback_query.edit_message_text(f"Stripe error: `{e}`")
 
+    kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
+    [InlineKeyboardButton("🔙 Cancel", callback_data="menu:shop")],
+])
+
     await update.callback_query.edit_message_text(
         "💳 *Stripe Checkout*\n\n"
-        "Use the secure link below to complete your payment:\n"
-        f"{session.url}",
+        f"*Item:* {item['name']} x{qty}\n"
+        f"*Total:* ${total:.2f}\n\n"
+        "_Tap the button below to complete payment securely._",
+        reply_markup=kb,
         parse_mode=ParseMode.MARKDOWN,
-    )
+)
+
 
 
 async def show_paynow_cart(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
@@ -388,13 +397,20 @@ async def create_stripe_checkout(update, context, sku: str, qty: int):
         int(item.get("seller_id", 0))
     )
 
+    kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
+    [InlineKeyboardButton("🔙 Cancel", callback_data="menu:shop")],
+])
+
     await update.callback_query.edit_message_text(
-        f"💳 *Stripe Checkout*\n\n"
+        "💳 *Stripe Checkout*\n\n"
         f"*Item:* {item['name']} x{qty}\n"
         f"*Total:* ${total:.2f}\n\n"
-        f"Click below to complete payment:\n{checkout_url}",
-        parse_mode="Markdown"
-    )
+        "_Tap the button below to complete payment securely._",
+        reply_markup=kb,
+        parse_mode=ParseMode.MARKDOWN,
+)
+
 
 
 

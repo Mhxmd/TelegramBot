@@ -39,6 +39,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     wallet.ensure_user_wallet(user_id)
 
+    args = context.args  # <-- deep-link arguments
+
+    # ======================
+    # STRIPE DEEP LINKS
+    # ======================
+    if args:
+        if args[0].startswith("success_"):
+            order_id = args[0].replace("success_", "")
+            await update.message.reply_text(
+                f"✅ *Payment Successful!*\n\n"
+                f"Order `{order_id}` is now secured in *escrow*.\n"
+                f"The seller will ship your item shortly.",
+                parse_mode="Markdown",
+            )
+
+        elif args[0].startswith("cancel_"):
+            order_id = args[0].replace("cancel_", "")
+            await update.message.reply_text(
+                f"❌ *Payment Cancelled*\n\n"
+                f"Order `{order_id}` was not completed.\n"
+                f"You may try again anytime.",
+                parse_mode="Markdown",
+            )
+
+    # ======================
+    # NORMAL HOME MENU
+    # ======================
     balance = storage.get_balance(user_id)
     kb, text = ui.build_main_menu(balance)
 
