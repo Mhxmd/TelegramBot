@@ -17,10 +17,11 @@ NOTIFICATIONS_FILE = "notifications.json"
 # =========================================================
 # RUNTIME STATE (IN-MEMORY)
 # =========================================================
-last_message_time: dict[int, float] = {}
-user_flow_state: dict[int, dict] = {}
-active_private_chats: dict[int, str] = {}
-active_public_chat: set[int] = set()
+last_message_time = {}
+user_flow_state = {}
+active_private_chats = {}
+active_public_chat = set()
+
 
 # =========================================================
 # ENSURE FILES EXIST

@@ -7,23 +7,23 @@ import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
-# ================================
-# FILE PATHS
-# ================================
+
 CART_FILE = "cart.json"
 SELLER_PRODUCTS_FILE = "seller_products.json"
 
+
 # ================================
-# LOAD PRODUCTS (NO ui.py import)
+# PRODUCT LOADING
 # ================================
+
 BUILTIN_PRODUCTS = {
     "cat": {"sku": "cat", "name": "Cat Plush", "price": 15, "emoji": "🐱", "seller_id": 0},
     "hoodie": {"sku": "hoodie", "name": "Hoodie", "price": 30, "emoji": "🧥", "seller_id": 0},
     "blackcap": {"sku": "blackcap", "name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0},
 }
 
+
 def load_all_products():
-    """Merge built-in items + seller uploaded items."""
     products = dict(BUILTIN_PRODUCTS)
 
     if os.path.exists(SELLER_PRODUCTS_FILE):
@@ -31,9 +31,9 @@ def load_all_products():
             with open(SELLER_PRODUCTS_FILE, "r") as f:
                 data = json.load(f)
                 for seller_id, items in data.items():
-                    for item in items:
-                        if "sku" in item:
-                            products[item["sku"]] = item
+                    for it in items:
+                        if "sku" in it:
+                            products[it["sku"]] = it
         except:
             pass
 
@@ -41,16 +41,17 @@ def load_all_products():
 
 
 def get_any_product_by_sku(sku):
-    products = load_all_products()
-    return products.get(sku)
+    return load_all_products().get(sku)
 
 
 # ======================================
 # CART STORAGE HELPERS
 # ======================================
+
 def load_cart():
     if not os.path.exists(CART_FILE):
         return {}
+
     try:
         with open(CART_FILE, "r") as f:
             data = json.load(f)
@@ -58,25 +59,26 @@ def load_cart():
     except:
         return {}
 
+
 def save_cart(data):
     with open(CART_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
+
 def get_user_cart(uid):
+    return load_cart().get(str(uid), {})
+
+
+def save_user_cart(uid, cart):
     data = load_cart()
-    return data.get(str(uid), {})
+    data[str(uid)] = cart
+    save_cart(data)
+
 
 def get_total(uid):
     cart = get_user_cart(uid)
     return sum(item["price"] * item["qty"] for item in cart.values())
 
-def get_cart_item_count(uid):
-    return len(get_user_cart(uid))
-
-def save_user_cart(uid, cart_dict):
-    data = load_cart()
-    data[str(uid)] = cart_dict
-    save_cart(data)
 
 def clear_cart(uid):
     data = load_cart()
@@ -87,6 +89,7 @@ def clear_cart(uid):
 # ======================================
 # CART OPERATIONS
 # ======================================
+
 def add_to_cart(uid, sku):
     cart = get_user_cart(uid)
     product = get_any_product_by_sku(sku)
@@ -132,10 +135,11 @@ def remove_from_cart(uid, sku):
 # ======================================
 # TELEGRAM HANDLERS
 # ======================================
+
 async def add_item(update, context, sku):
     uid = update.effective_user.id
     add_to_cart(uid, sku)
-    await update.callback_query.answer("🛒 Added to cart!")
+    return True
 
 
 async def change_quantity(update, context, sku, delta):
@@ -154,22 +158,44 @@ async def remove_item(update, context, sku):
     remove_from_cart(uid, sku)
     return await view_cart(update, context)
 
-# ======================
-# WRAPPERS FOR bot.py
-# ======================
-async def checkout_cart(update, context):
-    return await ui.cart_checkout_all(update, context)
 
-async def paynow_cart(update, context):
+# ========================================================
+# ADD-TO-CART FEEDBACK UI
+# ========================================================
+
+async def show_add_to_cart_feedback(update, context, sku):
     q = update.callback_query
     uid = update.effective_user.id
-    total = get_total(uid)
-    return await ui.show_paynow_cart(update, context, total)
+
+    cart = get_user_cart(uid)
+    item = cart.get(sku)
+
+    if not item:
+        return await q.answer("Item missing", show_alert=True)
+
+    qty = item["qty"]
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
+            InlineKeyboardButton(f"{qty}", callback_data="noop"),
+            InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}")
+        ],
+        [InlineKeyboardButton("🛒 Go to Cart", callback_data="cart:view")],
+        [InlineKeyboardButton("🏠 Back", callback_data="menu:shop")],
+    ])
+
+    msg = f"✔ *Added to cart!* ({item['name']})"
+
+    return await q.edit_message_text(
+        msg, parse_mode="Markdown", reply_markup=kb
+    )
 
 
 # ======================================
 # VIEW CART
 # ======================================
+
 async def view_cart(update, context):
     q = update.callback_query
     uid = update.effective_user.id
@@ -208,24 +234,7 @@ async def view_cart(update, context):
     text += f"\n💰 *Total:* ${total:.2f}"
 
     rows.append([InlineKeyboardButton("🧹 Clear", callback_data="cart_clear")])
-
-    # IMPORTANT: use correct callback for ui.py integration
     rows.append([InlineKeyboardButton("💳 Checkout All", callback_data="cart:checkout_all")])
-
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
     return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
-
-
-# ======================================
-# PAYMENT CONFIRMATION
-# ======================================
-async def confirm_payment(update, context):
-    uid = update.effective_user.id
-    total = get_total(uid)
-    clear_cart(uid)
-
-    await update.callback_query.edit_message_text(
-        f"✅ Payment confirmed!\nPaid: *${total:.2f}*\nCart cleared.",
-        parse_mode="Markdown"
-    )
