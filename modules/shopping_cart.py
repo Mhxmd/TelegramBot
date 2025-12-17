@@ -143,6 +143,7 @@ async def add_item(update, context, sku):
 
 
 async def change_quantity(update, context, sku, delta):
+    q = update.callback_query
     uid = update.effective_user.id
     cart = get_user_cart(uid)
 
@@ -150,7 +151,15 @@ async def change_quantity(update, context, sku, delta):
         new_qty = cart[sku]["qty"] + delta
         update_quantity(uid, sku, max(0, new_qty))
 
-    return await view_cart(update, context)
+    # 🔍 Detect whether this callback came from mini panel or full cart
+    message_text = q.message.text or ""
+
+    if "Added to cart!" in message_text:
+        # 👉 Update mini panel instead of opening cart
+        return await show_add_to_cart_feedback(update, context, sku)
+    else:
+        # 👉 Normal behaviour — update full cart page
+        return await view_cart(update, context)
 
 
 async def remove_item(update, context, sku):
@@ -185,11 +194,14 @@ async def show_add_to_cart_feedback(update, context, sku):
         [InlineKeyboardButton("🏠 Back", callback_data="menu:shop")],
     ])
 
-    msg = f"✔ *Added to cart!* ({item['name']})"
+    msg = f"✔ *Added to cart!* ({item['name']})\nQuantity: *{qty}*"
 
     return await q.edit_message_text(
-        msg, parse_mode="Markdown", reply_markup=kb
+        msg,
+        parse_mode="Markdown",
+        reply_markup=kb
     )
+
 
 
 # ======================================
