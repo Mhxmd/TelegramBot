@@ -309,3 +309,10 @@ def release_on_failure_or_refund(order_id: str, reason: str = "failed") -> Tuple
 
     _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
     return True, "ok"            
+
+def check_stock(sku: str, qty: int):
+    """
+    Backward-compatible wrapper.
+    Some modules still call inventory.check_stock().
+    """
+    return check_available(sku, qty)
