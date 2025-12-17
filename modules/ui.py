@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from modules import storage, seller, chat, inventory
 from modules import shopping_cart
 import modules.wallet_utils as wallet   # safe import
+from typing import Optional
 
 import stripe
 
@@ -78,7 +79,10 @@ def get_any_product_by_sku(sku: str):
     return None
 
 
-def generate_paynow_qr(amount: float, item_name: str, order_id: str | None = None) -> BytesIO:
+
+
+def generate_paynow_qr(amount: float, item_name: str, order_id: Optional[str] = None) -> BytesIO:
+
     """
     Create a QR image pointing to a fake PayNow gateway page hosted on Vercel.
     Encodes: https://fake-paynow.../?order=...&item=...&amount=...
@@ -168,8 +172,8 @@ def build_shop_keyboard():
         )
         rows.append([
             InlineKeyboardButton(f"💰 Buy ${it['price']:.2f}", callback_data=f"buy:{it['sku']}:1"),
-            InlineKeyboardButton("➕ Cart", callback_data=f"cart_add:{it['sku']}"),
-            InlineKeyboardButton("💬 Chat Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
+            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart_add:{it['sku']}"),
+            InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{it['sku']}:{it.get('seller_id',0)}"),
         ])
 
     rows.append([InlineKeyboardButton("🔍 Search Items", callback_data="shop:search")])
