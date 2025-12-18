@@ -3,11 +3,22 @@ import json
 import logging
 import pathlib
 
+import requests
+
+import requests
+
+HITPAY_API_KEY = os.getenv("HITPAY_API_KEY", "").strip()
+HITPAY_BASE_URL = os.getenv("HITPAY_BASE_URL", "https://api.hit-pay.com/v1").strip()
+
+if not HITPAY_API_KEY:
+    raise RuntimeError("HITPAY_API_KEY missing in .env")
+
+
+
 import stripe
 from fastapi import FastAPI, Request, HTTPException
-from dotenv import load_dotenv
 from fastapi.responses import HTMLResponse
-
+from dotenv import load_dotenv
 
 # ============================================================
 # 🔧 LOAD ENV + CONFIG
@@ -17,44 +28,66 @@ load_dotenv(BASE_DIR / ".env")
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()  # e.g. https://xxxx.ngrok-free.dev
-BOT_CALLBACK_URL = os.getenv("BOT_CALLBACK_URL", "").strip()  # optional future use
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()  # ngrok https URL
 
 if not STRIPE_SECRET_KEY:
     raise RuntimeError("STRIPE_SECRET_KEY missing in .env")
 if not STRIPE_WEBHOOK_SECRET:
     raise RuntimeError("STRIPE_WEBHOOK_SECRET missing in .env")
 if not PUBLIC_BASE_URL:
-    raise RuntimeError("PUBLIC_BASE_URL missing in .env (use your ngrok https URL)")
+    raise RuntimeError("PUBLIC_BASE_URL missing in .env")
 
 stripe.api_key = STRIPE_SECRET_KEY
 
 ORDERS_FILE = BASE_DIR / "orders.json"
 BALANCE_FILE = BASE_DIR / "balances.json"
 
+# ============================================================
+# 🚀 APP INIT
+# ============================================================
 app = FastAPI()
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("server")
 
-#HTMLResponse
+# ============================================================
+# JSON HELPERS
+# ============================================================
+def load_json(path: pathlib.Path):
+    if not path.exists():
+        path.write_text("{}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-from fastapi.responses import HTMLResponse
+def save_json(path: pathlib.Path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+# ============================================================
+# 🌐 PAYMENT LANDING PAGES
+# ============================================================
 @app.get("/payment/success", response_class=HTMLResponse)
 async def payment_success(order_id: str):
     return f"""
     <html>
       <head>
-        <meta charset="utf-8" />
+        <meta charset="utf-8"/>
         <title>Payment Successful</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <meta http-equiv="refresh" content="5;url=https://t.me/Xchange_ShopBot?start=success_{order_id}">
+        <meta http-equiv="refresh"
+              content="5;url=https://t.me/Xchange_ShopBot?start=success_{order_id}">
         <style>
           body {{
             background:#020617;
             color:#e5e7eb;
-            font-family:system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
             display:flex;
             justify-content:center;
             align-items:center;
@@ -70,14 +103,8 @@ async def payment_success(order_id: str):
             box-shadow:0 20px 40px rgba(0,0,0,0.55);
             border:1px solid #1e293b;
           }}
-          h1 {{
-            color:#22c55e;
-            margin-bottom:12px;
-          }}
-          p {{
-            color:#cbd5f5;
-            line-height:1.6;
-          }}
+          h1 {{ color:#22c55e; }}
+          p {{ color:#cbd5f5; }}
           a {{
             display:inline-block;
             margin-top:26px;
@@ -115,22 +142,19 @@ async def payment_success(order_id: str):
     </html>
     """
 
-
-from fastapi.responses import HTMLResponse
-
 @app.get("/payment/cancel", response_class=HTMLResponse)
 async def payment_cancel(order_id: str):
     return f"""
     <html>
       <head>
-        <meta charset="utf-8" />
+        <meta charset="utf-8"/>
         <title>Payment Cancelled</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
         <style>
           body {{
             background:#020617;
             color:#e5e7eb;
-            font-family:system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
             display:flex;
             justify-content:center;
             align-items:center;
@@ -146,14 +170,8 @@ async def payment_cancel(order_id: str):
             box-shadow:0 20px 40px rgba(0,0,0,0.55);
             border:1px solid #1e293b;
           }}
-          h1 {{
-            color:#ef4444;
-            margin-bottom:12px;
-          }}
-          p {{
-            color:#cbd5f5;
-            line-height:1.6;
-          }}
+          h1 {{ color:#ef4444; }}
+          p {{ color:#cbd5f5; }}
           a {{
             display:inline-block;
             margin-top:26px;
@@ -169,9 +187,7 @@ async def payment_cancel(order_id: str):
       <body>
         <div class="card">
           <h1>❌ Payment Cancelled</h1>
-          <p>
-            Order <b>{order_id}</b> was not completed.
-          </p>
+          <p>Order <b>{order_id}</b> was not completed.</p>
 
           <a href="https://t.me/Xchange_ShopBot?start=cancel_{order_id}">
             ⬅ Return to Xchange Bot
@@ -181,56 +197,65 @@ async def payment_cancel(order_id: str):
     </html>
     """
 
+#Create Payment Endpoint
 
+@app.post("/hitpay/create_payment")
+async def hitpay_create_payment(request: Request):
+    body = await request.json()
 
+    order_id = body.get("order_id")
+    user_id = body.get("user_id")
+    amount = body.get("amount")
 
+    if not order_id or not amount:
+        raise HTTPException(status_code=400, detail="Missing order_id or amount")
 
-# ============================================================
-# JSON HELPERS
-# ============================================================
-def load_json(path: pathlib.Path):
-    """
-    Orders format expected (dict):
-    {
-      "ord_123": { ...order... },
-      "ord_456": { ...order... }
+    payload = {
+        "amount": round(float(amount), 2),
+        "currency": "SGD",
+        "reference_number": order_id,
+        "redirect_url": f"{PUBLIC_BASE_URL}/payment/success?order_id={order_id}",
+        "webhook": f"{PUBLIC_BASE_URL}/hitpay/webhook",
+        "purpose": f"Order {order_id}",
     }
-    Balances format expected (dict):
-    {
-      "123456789": 10.50,
-      "987654321": 2.00
+
+    headers = {
+        "X-BUSINESS-API-KEY": HITPAY_API_KEY,
+        "Content-Type": "application/json",
     }
-    """
-    if not path.exists():
-        path.write_text("{}")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
+    try:
+        r = requests.post(
+            f"{HITPAY_BASE_URL}/payment-requests",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
 
-def save_json(path: pathlib.Path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        log.info(f"✅ HitPay payment created: {data['id']}")
+
+        return {
+            "checkout_url": data["url"],
+            "hitpay_id": data["id"],
+        }
+
+    except Exception as e:
+        log.error(f"❌ HitPay create error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
-# HEALTH CHECK
-# ============================================================
-@app.get("/health")
-async def health():
-    return {"ok": True}
-
-
-# ============================================================
-# CHECKOUT SESSION (CALLED BY TELEGRAM BOT)
+# 💳 CREATE STRIPE CHECKOUT SESSION
 # ============================================================
 @app.post("/create_checkout_session")
 async def create_checkout_session(request: Request):
     body = await request.json()
 
-    # Required inputs from bot
     order_id = str(body.get("order_id", "")).strip()
     user_id = str(body.get("user_id", "")).strip()
-    amount_sgd = body.get("amount", None)
+    amount_sgd = body.get("amount")
 
     if not order_id or not user_id or amount_sgd is None:
         raise HTTPException(status_code=400, detail="Missing order_id, user_id, or amount")
@@ -243,24 +268,18 @@ async def create_checkout_session(request: Request):
     if amount_cents <= 0:
         raise HTTPException(status_code=400, detail="Amount must be > 0")
 
-    # ✅ IMPORTANT: card only unless PayNow is fully enabled/approved on Stripe account
-    payment_method_types = ["card"]
-
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=payment_method_types,
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "sgd",
-                        "product_data": {"name": f"Order #{order_id}"},
-                        "unit_amount": amount_cents,
-                    },
-                    "quantity": 1,
-                }
-            ],
+            payment_method_types=["card"],
             mode="payment",
-            # Must be HTTPS and stable (ngrok is ok for dev)
+            line_items=[{
+                "price_data": {
+                    "currency": "sgd",
+                    "product_data": {"name": f"Order #{order_id}"},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }],
             success_url=f"{PUBLIC_BASE_URL}/payment/success?order_id={order_id}",
             cancel_url=f"{PUBLIC_BASE_URL}/payment/cancel?order_id={order_id}",
             metadata={
@@ -270,99 +289,80 @@ async def create_checkout_session(request: Request):
             },
         )
 
-        log.info(f"✅ Created Stripe Checkout Session: order={order_id} session={session.id}")
-
+        log.info(f"✅ Stripe session created: {session.id}")
         return {"checkout_url": session.url, "session_id": session.id}
 
     except Exception as e:
-        log.error(f"⚠️ Stripe Checkout Error: {e}")
+        log.error(f"❌ Stripe error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # ============================================================
-# 📡 STRIPE WEBHOOK HANDLER — SOURCE OF TRUTH
+# 📡 STRIPE WEBHOOK — SOURCE OF TRUTH
 # ============================================================
 @app.post("/webhook")
-async def webhook_handler(request: Request):
+async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
     if not sig_header:
-        raise HTTPException(status_code=400, detail="Missing stripe-signature header")
+        raise HTTPException(status_code=400, detail="Missing stripe-signature")
 
-    # 🔐 Validate webhook signature
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
     except Exception as e:
-        log.error(f"❌ Invalid Webhook Signature: {e}")
+        log.error(f"❌ Invalid webhook signature: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-    event_type = event.get("type")
-    obj = event["data"]["object"]
+    log.info(f"📡 Stripe Event: {event['type']}")
 
-    log.info(f"📡 Stripe Event Received: {event_type}")
-
-    # We care about successful payment completion
-    if event_type == "checkout.session.completed":
-        session = obj
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
         metadata = session.get("metadata", {}) or {}
-        order_type = metadata.get("type")
 
-        # ----------------------------------------------------
-        # 🔒 ESCROW PAYMENT FLOW
-        # ----------------------------------------------------
-        if order_type == "escrow_payment":
-            order_id = (metadata.get("order_id") or "").strip()
-            user_id = (metadata.get("user_id") or "").strip()
-
-            if not order_id:
-                log.warning("⚠️ Missing order_id in metadata for escrow_payment")
-                return {"status": "ignored"}
+        if metadata.get("type") == "escrow_payment":
+            order_id = metadata.get("order_id")
+            user_id = metadata.get("user_id")
 
             orders = load_json(ORDERS_FILE)
 
-            # ✅ orders.json should be dict keyed by order_id
-            if order_id in orders and isinstance(orders[order_id], dict):
-                orders[order_id]["status"] = "escrow_hold"  # move into escrow ONLY after webhook
+            if order_id in orders:
+                orders[order_id]["status"] = "escrow_hold"
                 orders[order_id]["stripe_session_id"] = session.get("id")
                 orders[order_id]["stripe_payment_intent"] = session.get("payment_intent")
                 orders[order_id]["paid_by_user_id"] = user_id
                 save_json(ORDERS_FILE, orders)
 
-                log.info(f"🔒 Order moved to escrow_hold: {order_id}")
+                log.info(f"🔒 Order {order_id} moved to escrow_hold")
             else:
-                log.warning(f"⚠️ Order not found or invalid shape: {order_id}")
+                log.warning(f"⚠️ Order not found: {order_id}")
 
-        # ----------------------------------------------------
-        # 💰 WALLET TOP-UP FLOW (optional)
-        # ----------------------------------------------------
-        if order_type == "wallet_topup":
-            user_id = (metadata.get("user_id") or "").strip()
-            if not user_id:
-                log.warning("⚠️ Missing user_id in metadata for wallet_topup")
-                return {"status": "ignored"}
+    return {"status": "ok"}
 
-            amount_total = session.get("amount_total")  # in cents
-            if amount_total is None:
-                log.warning("⚠️ Missing amount_total for wallet_topup")
-                return {"status": "ignored"}
+@app.post("/hitpay/webhook")
+async def hitpay_webhook(request: Request):
+    payload = await request.json()
 
-            amount = float(amount_total) / 100.0
+    # HitPay sends status updates
+    status = payload.get("status")
+    order_id = payload.get("reference_number")
 
-            balances = load_json(BALANCE_FILE)
-            current = float(balances.get(user_id, 0.0))
-            balances[user_id] = round(current + amount, 2)
-            save_json(BALANCE_FILE, balances)
+    log.info(f"📡 HitPay webhook: {status} for {order_id}")
 
-            log.info(f"💰 Wallet Top-up +${amount:.2f} SGD → User {user_id}")
+    if status != "completed" or not order_id:
+        return {"status": "ignored"}
 
-    return {"status": "success"}
+    orders = load_json(ORDERS_FILE)
 
-#Instructions to run the server in development mode
-# ============================================================
-# RUN (DEV):
-# 1) uvicorn server:app --reload --port 4242
-# 2) ngrok http 4242
-# 3) Stripe webhook endpoint (Dashboard) points to:
-#       https://<your-ngrok>.ngrok-free.dev/webhook
-# ============================================================
+    if order_id in orders:
+        orders[order_id]["status"] = "escrow_hold"
+        orders[order_id]["hitpay_payment_id"] = payload.get("id")
+        save_json(ORDERS_FILE, orders)
+
+        log.info(f"🔒 Order {order_id} moved to escrow_hold (HitPay)")
+    else:
+        log.warning(f"⚠️ Order not found for HitPay webhook: {order_id}")
+
+    return {"status": "ok"}
+

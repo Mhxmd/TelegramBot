@@ -1,4 +1,4 @@
-VERCEL_PAY_URL = "https://fake-paynow-yourname.vercel.app"
+
 
 import os
 import qrcode
@@ -57,26 +57,6 @@ def get_any_product_by_sku(sku: str):
     return None
 
 
-# ==========================================
-# PAYNOW QR GENERATION
-# ==========================================
-def generate_paynow_qr(amount: float, item_name: str, order_id: Optional[str] = None):
-    import time, random
-    from urllib.parse import urlencode
-
-    if order_id is None:
-        order_id = f"O{int(time.time())}{random.randint(100,999)}"
-
-    qs = urlencode({"order": order_id, "item": item_name, "amount": f"{amount:.2f}"})
-    url = VERCEL_PAY_URL.rstrip("/") + "/?" + qs
-
-    img = qrcode.make(url)
-    bio = BytesIO()
-    img.save(bio, "PNG")
-    bio.seek(0)
-    bio.url = url
-    bio.order_id = order_id
-    return bio
 
 
 # ==========================================
@@ -169,33 +149,13 @@ async def cart_checkout_all(update, context):
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
-        [InlineKeyboardButton("🇸🇬 PayNow", callback_data=f"paynow_cart:{total}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
         [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total}")],
         [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
     ])
 
     return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
 
-
-# ==========================================
-# PAYNOW (CART)
-# ==========================================
-async def show_paynow_cart(update, context, total):
-    q = update.callback_query
-
-    qr = generate_paynow_qr(float(total), "Cart Checkout")
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I HAVE PAID", callback_data="cart:confirm_payment")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
-    ])
-
-    await q.message.reply_photo(
-        photo=InputFile(qr, filename="paynow_cart.png"),
-        caption=f"🇸🇬 *Demo PayNow — Cart*\nAmount: *${float(total):.2f}*",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
 
 
 # ==========================================
@@ -236,7 +196,7 @@ async def on_buy(update, context, sku, qty):
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
-        [InlineKeyboardButton("🇸🇬 PayNow", callback_data=f"paynow:{sku}:{qty}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
         [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
@@ -293,20 +253,30 @@ async def create_stripe_checkout(update, context, sku, qty):
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
-    order_id = f"{sku}_{user_id}"
+    import time
+    order_id = f"ord_{user_id}_{int(time.time())}"
+
 
     try:
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+
         res = requests.post(
-            os.getenv("SERVER_BASE_URL") + "/create_checkout_session",
+            f"{SERVER_BASE}/create_checkout_session",
             json={
-                "order_id": order_id,
-                "amount": total,
-                "user_id": user_id
-            }
-        ).json()
-        checkout_url = res["checkout_url"]
+            "order_id": order_id,
+            "amount": total,
+            "user_id": user_id
+            },
+            timeout=15
+        )
+
+        res.raise_for_status()   # 👈 catches 4xx / 5xx properly
+        data = res.json()
+        checkout_url = data["checkout_url"]
+
     except Exception as e:
-        return await q.edit_message_text(f"Error: {e}")
+        return await q.edit_message_text(f"❌ Stripe error: {e}")
+
 
     storage.add_order(user_id, item["name"], qty, total, "Stripe", int(item.get("seller_id", 0)))
 
@@ -321,30 +291,108 @@ async def create_stripe_checkout(update, context, sku, qty):
         parse_mode="Markdown",
     )
 
+#HitPay Checkout - Single Item
 
-# ==========================================
-# PAYNOW — SINGLE ITEM
-# ==========================================
-async def show_paynow(update, context, sku, qty):
+async def create_hitpay_checkout(update, context, sku, qty):
+    import requests, time
+
     q = update.callback_query
     item = get_any_product_by_sku(sku)
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
+    user_id = update.effective_user.id
+    order_id = f"ord_{user_id}_{int(time.time())}"
 
-    qr = generate_paynow_qr(total, item["name"])
+    try:
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+
+        res = requests.post(
+            f"{SERVER_BASE}/hitpay/create_payment",
+            json={
+                "order_id": order_id,
+                "amount": total,
+                "user_id": user_id,
+                "description": item["name"],
+            },
+            timeout=15,
+        )
+        res.raise_for_status()
+        data = res.json()
+        payment_url = data["payment_url"]
+
+    except Exception as e:
+        return await q.edit_message_text(f"❌ HitPay error: {e}")
+
+    storage.add_order(
+        user_id,
+        item["name"],
+        qty,
+        total,
+        "HitPay",
+        int(item.get("seller_id", 0)),
+    )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I HAVE PAID", callback_data=f"payconfirm:{qr.order_id}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{qr.order_id}")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+        [InlineKeyboardButton("🇸🇬 Pay with PayNow", url=payment_url)],
+        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
     ])
 
-    await q.message.reply_photo(
-        photo=InputFile(qr, filename="paynow_single.png"),
-        caption=f"*Demo PayNow*\nItem: {item['name']}\nAmount: ${total:.2f}",
-        parse_mode="Markdown",
+    await q.edit_message_text(
+        f"*HitPay Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}",
         reply_markup=kb,
+        parse_mode="Markdown",
     )
+
+#HitPay Checkout - Cart
+
+async def create_hitpay_cart_checkout(update, context, total):
+    import requests, time
+
+    q = update.callback_query
+    user_id = update.effective_user.id
+    order_id = f"cart_{user_id}_{int(time.time())}"
+
+    try:
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+
+        res = requests.post(
+            f"{SERVER_BASE}/hitpay/create_payment",
+            json={
+                "order_id": order_id,
+                "amount": float(total),
+                "user_id": user_id,
+                "description": "Cart Checkout",
+            },
+            timeout=15,
+        )
+        res.raise_for_status()
+        data = res.json()
+        payment_url = data["payment_url"]
+
+    except Exception as e:
+        return await q.edit_message_text(f"❌ HitPay error: {e}")
+
+    storage.add_order(
+        user_id,
+        "Cart Items",
+        1,
+        float(total),
+        "HitPay",
+        0,
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇸🇬 Pay with PayNow", url=payment_url)],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
+    ])
+
+    await q.edit_message_text(
+        f"*HitPay Cart Checkout*\nTotal: ${float(total):.2f}",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+
 
 
 # ==========================================

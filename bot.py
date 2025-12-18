@@ -97,9 +97,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, sku, qty = data.split(":")
             return await ui.create_stripe_checkout(update, context, sku, int(qty))
 
-        if data.startswith("paynow:"):
+        if data.startswith("hitpay:"):
             _, sku, qty = data.split(":")
-            return await ui.show_paynow(update, context, sku, int(qty))
+            return await ui.create_hitpay_checkout(update, context, sku, int(qty))
+        
+        # HitPay Checkout - Cart
+
+        if data.startswith("hitpay_cart:"):
+            _, total = data.split(":")
+            return await ui.create_hitpay_cart_checkout(update, context, float(total))
+
+        # PAYMENTS SINGLE ITEM NETS
 
         if data.startswith("nets:"):
             _, sku, qty = data.split(":")
