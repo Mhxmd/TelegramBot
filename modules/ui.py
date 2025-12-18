@@ -420,6 +420,38 @@ async def on_menu(update, context):
         buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
 
         return await safe_edit("💌 *Messages*", InlineKeyboardMarkup(buttons))
+    
+    if tab == "orders":
+        orders = storage.list_orders_for_user(uid)
+
+        if not orders:
+            txt = "📦 *Orders*\n\nNo orders yet."
+        else:
+            orders = sorted(
+                orders,
+                key=lambda o: int(o.get("ts", 0)),
+                reverse=True
+            )
+
+            lines = ["📦 *Orders*"]
+            for o in orders[:20]:
+                oid = o.get("id", "unknown")
+                item = o.get("item", "item")
+                qty = o.get("qty", 1)
+                amt = float(o.get("amount", 0))
+                status = o.get("status", "pending")
+                method = o.get("method", "-")
+
+                lines.append(f"\n• `{oid}`")
+                lines.append(f"  {item} x{qty}  `${amt:.2f}`")
+                lines.append(f"  Status: *{status}*  Method: {method}")
+
+            txt = "\n".join(lines)
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+        ])
+        return await safe_edit(txt, kb)
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))

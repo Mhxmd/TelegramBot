@@ -129,12 +129,17 @@ def get_user_orders(user_id: int) -> Dict[str, dict]:
 
     return result
 
-def list_orders_for_user(user_id: int) -> List[dict]:
+def list_orders_for_user(user_id: int) -> list[dict]:
     orders = load_json(ORDERS_FILE)
-    return [
-        o for o in orders.values()
-        if o.get("buyer_id") == user_id or o.get("seller_id") == user_id
-    ]
+    out = []
+
+    for oid, o in orders.items():
+        if o.get("buyer_id") == user_id or o.get("seller_id") == user_id:
+            o = dict(o)          
+            o["id"] = oid        
+            out.append(o)
+
+    return out
 
 def get_all_disputed_orders() -> Dict[str, dict]:
     orders = load_json(ORDERS_FILE)
