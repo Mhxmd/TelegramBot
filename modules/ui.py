@@ -318,7 +318,11 @@ async def create_hitpay_checkout(update, context, sku, qty):
         )
         res.raise_for_status()
         data = res.json()
-        payment_url = data["payment_url"]
+        payment_url = data.get("checkout_url")
+
+        if not payment_url:
+            raise Exception(f"Invalid HitPay response: {data}")
+
 
     except Exception as e:
         return await q.edit_message_text(f"❌ HitPay error: {e}")

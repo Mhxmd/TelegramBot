@@ -1,10 +1,10 @@
 import os
+import pathlib
+from dotenv import load_dotenv
+import requests
 import json
 import logging
-import pathlib
-import requests
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 import stripe
@@ -24,7 +24,14 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 
 HITPAY_API_KEY = os.getenv("HITPAY_API_KEY", "").strip()
-HITPAY_BASE_URL = "https://api.hit-pay.com/v1"
+HITPAY_API_BASE = os.getenv(
+    "HITPAY_API_BASE",
+    "https://api.sandbox.hit-pay.com/v1"
+).strip()
+
+if not HITPAY_API_KEY:
+    raise RuntimeError("HITPAY_API_KEY missing in .env")
+
 
 # ============================================================
 # ❌ HARD FAIL IF MISSING
@@ -132,7 +139,7 @@ async def hitpay_create_payment(request: Request):
 
     try:
         r = requests.post(
-            f"{HITPAY_BASE_URL}/payment-requests",
+            f"{HITPAY_API_BASE}/payment-requests",
             json=payload,
             headers=headers,
             timeout=15,
