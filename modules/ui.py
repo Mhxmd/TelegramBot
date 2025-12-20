@@ -70,6 +70,66 @@ def search_products_by_name(query: str):
             results.append(it)
     return results
 
+async def ask_user_search(update, context):
+    q = update.callback_query
+    context.user_data["awaiting_search"] = "users"
+
+    await q.edit_message_text(
+        "👤 *Search Users*\n\nSend a *username* or *user ID*.",
+        parse_mode="Markdown",
+    )
+
+async def ask_search(update, context):
+    q = update.callback_query
+    context.user_data["awaiting_search"] = "products"
+
+    await q.edit_message_text(
+        "🔍 *Search Products*\n\nSend a product name.",
+        parse_mode="Markdown",
+    )
+
+async def show_user_search_results(update, context, results):
+    msg = update.effective_message
+
+    if not results:
+        return await msg.reply_text("No users found.")
+
+    blocks = []
+    buttons = []
+
+    for u in results:
+        uid = int(u["user_id"])
+        uname = u.get("username") or "unknown"
+        role = u.get("role", "buyer")
+
+        # list items sold by this user
+        items = storage.list_seller_products(uid)
+
+        if items:
+            item_lines = []
+            for it in items[:5]:
+                name = it.get("name", "Unnamed")
+                price = float(it.get("price", 0))
+                item_lines.append(f"• {name} — ${price:.2f}")
+            selling = "Items selling:\n" + "\n".join(item_lines)
+        else:
+            selling = "Items selling:\n• None"
+
+        blocks.append(
+            f"👤 `{uid}` — @{uname} ({role})\n\n{selling}"
+        )
+
+        buttons.append([
+            InlineKeyboardButton("💬 Message", callback_data=f"chat:user:{uid}")
+        ])
+
+    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+
+    await msg.reply_text(
+        "👤 *User Search Results*\n\n" + "\n\n".join(blocks),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
 
 # ==========================================
 # MAIN MENU
@@ -119,6 +179,7 @@ def build_shop_keyboard():
         ])
 
     rows.append([InlineKeyboardButton("🔍 Search Items", callback_data="shop:search")])
+    rows.append([InlineKeyboardButton("👤 Search Users", callback_data="search:users")])
     rows.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
 
     txt = (

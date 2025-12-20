@@ -99,6 +99,36 @@ async def on_contact_seller(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             "I’ll deliver your message automatically once they come online."
         )
 
+async def on_chat_user(update: Update, context: ContextTypes.DEFAULT_TYPE, target_id: int):
+    q = update.callback_query
+    sender = update.effective_user
+    sender_id = sender.id
+
+    if sender_id == target_id:
+        return await q.answer("You cannot message yourself.", show_alert=True)
+
+    # reuse thread model, but no product
+    product = {"sku": "user_chat", "name": "Direct Message", "price": 0}
+
+    thread_id = storage.create_thread(sender_id, target_id, product)
+    storage.active_private_chats[sender_id] = thread_id
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Open Chat", callback_data=f"chat:open:{thread_id}")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
+    ])
+
+    await q.edit_message_text(
+        "💬 *Direct Message*\n\nTap *Open Chat* to start chatting.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb
+    )
+
+    try:
+        await smart_send(context, target_id, f"📩 *New Message*\n{sender.first_name} wants to chat with you.")
+    except Exception:
+        storage.add_pending_notification(target_id, f"🕓 *Missed Message*\n{sender.first_name} tried to message you.")
+
 async def on_chat_open(update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id: str):
     q = update.callback_query
     uid = update.effective_user.id

@@ -37,6 +37,7 @@ logger = logging.getLogger("marketbot")
 # ==========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    storage.ensure_user_exists(user_id, update.effective_user.username)
     wallet.ensure_user_wallet(user_id)
 
     balance = storage.get_balance(user_id)
@@ -74,6 +75,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # SEARCH
         if data == "shop:search":
             return await ui.ask_search(update, context)
+        
+        if data == "search:users":
+         return await ui.ask_user_search(update, context)
 
         # BUY FLOW
         if data.startswith("buy:"):
@@ -186,6 +190,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data == "chat:public_open":
             return await chat.on_public_chat_open(update, context)
+        
+        if data.startswith("chat:user:"):
+         target_id = int(data.split(":")[2])
+         return await chat.on_chat_user(update, context, target_id)
 
         # WALLET
         if data == "wallet:deposit":
@@ -219,6 +227,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = msg.from_user.id
     text = (msg.text or "").strip()
+    storage.ensure_user_exists(uid, update.effective_user.username)
+
 
     # CHAT systems
     if chat.is_in_public_chat(uid):
@@ -237,9 +247,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # SEARCH MODE
     if context.user_data.get("awaiting_search"):
-        context.user_data["awaiting_search"] = False
-        results = ui.search_products_by_name(text)
-        return await ui.show_search_results(update, context, results)
+      mode = context.user_data.pop("awaiting_search")
+
+    if mode == "users":
+        results = storage.search_users(text)
+        return await ui.show_user_search_results(update, context, results)
+
+    results = ui.search_products_by_name(text)
+    return await ui.show_search_results(update, context, results)
 
     return await msg.reply_text("Send /start to open the marketplace.")
 

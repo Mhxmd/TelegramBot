@@ -13,6 +13,7 @@ SELLER_PRODUCTS_FILE = "seller_products.json"
 MESSAGES_FILE = "messages.json"
 WALLETS_FILE = "wallets.json"
 NOTIFICATIONS_FILE = "notifications.json"
+USERS_FILE = "users.json"
 
 # =========================================================
 # RUNTIME STATE (IN-MEMORY)
@@ -33,6 +34,7 @@ FILES_AND_DEFAULTS = {
     SELLER_PRODUCTS_FILE: {},
     MESSAGES_FILE: {},
     WALLETS_FILE: {},
+    USERS_FILE: {},
     NOTIFICATIONS_FILE: []
 }
 
@@ -161,6 +163,44 @@ def set_role(user_id: int, role: str):
     roles = load_json(ROLES_FILE)
     roles[str(user_id)] = role
     save_json(ROLES_FILE, roles)
+
+# =========================================================
+# USERS (REGISTRY FOR USER SEARCH)
+# =========================================================
+def ensure_user_exists(user_id: int, username: str | None):
+    users = load_json(USERS_FILE)
+    uid = str(user_id)
+
+    if uid not in users:
+        users[uid] = {
+            "username": (username or "").lstrip("@"),
+            "role": get_role(user_id),
+            "created_ts": int(time.time()),
+            "last_seen_ts": int(time.time()),
+        }
+    else:
+        users[uid]["username"] = (username or users[uid].get("username", "")).lstrip("@")
+        users[uid]["role"] = get_role(user_id)
+        users[uid]["last_seen_ts"] = int(time.time())
+
+    save_json(USERS_FILE, users)
+
+
+def search_users(query: str):
+    q = query.lower().strip()
+    users = load_json(USERS_FILE)
+    results = []
+
+    for uid, u in users.items():
+        username = (u.get("username") or "").lower()
+        if q in uid or (username and q in username):
+            results.append({
+                "user_id": int(uid),
+                "username": u.get("username", "unknown"),
+                "role": u.get("role", "buyer"),
+            })
+
+    return results
 
 # =========================================================
 # SELLER PRODUCTS
