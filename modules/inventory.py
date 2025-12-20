@@ -155,11 +155,27 @@ def get_available_stock(sku: str) -> Optional[int]:
     Returns available stock for seller products.
     Returns None for built-in / non-seller products (treat as unlimited).
     """
+    base_sku, var_id = split_sku_variant(sku)
+
     data = _load_seller_products_raw()
-    p = _find_seller_product_mut(data, sku)
+    p = _find_seller_product_mut(data, base_sku)
     if not p:
         return None
+    
     _ensure_fields(p)
+
+    # -------- VARIATION STOCK CHECK --------
+    if var_id:
+        v = _find_variant_mut(p, var_id)
+        if not v:
+            return 0
+        return max(
+            0,
+            _get_int(v, "stock", 0) - _get_int(v, "reserved", 0)
+        )
+    # --------------------------------------------------
+
+    # Existing product-level logic
     stock = _get_int(p, "stock", 0)
     reserved = _get_int(p, "reserved", 0)
     return max(0, stock - reserved)
@@ -192,36 +208,67 @@ def reserve_for_payment(order_id: str, sku: str, qty: int) -> Tuple[bool, str]:
     Race-safe.
     Persists reservation flags into the order.
     """
+
     sku = str(sku).strip()
     qty = max(1, int(qty))
 
+    base_sku, var_id = split_sku_variant(sku)
+
     # Built-in items -> skip reservation
     preview = _load_seller_products_raw()
-    if _find_seller_product_mut(preview, sku) is None:
+    if _find_seller_product_mut(preview, base_sku) is None:
         _save_order_patch(order_id, {"sku": sku, "inv_qty": qty, "inv_reserved": False, "inv_deducted": False})
         return True, "ok"
 
     with FileLock(_LOCK_PATH):
         data = _load_seller_products_raw()
-        p = _find_seller_product_mut(data, sku)
+        p = _find_seller_product_mut(data, base_sku)
         if not p:
             _save_order_patch(order_id, {"sku": sku, "inv_qty": qty, "inv_reserved": False, "inv_deducted": False})
             return True, "ok"
 
         _ensure_fields(p)
-        stock = _get_int(p, "stock", 0)
-        reserved = _get_int(p, "reserved", 0)
-        available = max(0, stock - reserved)
 
-        if available < qty:
-            return False, f"Out of stock. Available: {available}"
+        # ---------------- VARIATION LOGIC ----------------
+        if var_id:
+            v = _find_variant_mut(p, var_id)
+            if not v:
+                return False, "Variation not found"
 
-        p["reserved"] = reserved + qty
+            stock = _get_int(v, "stock", 0)
+            reserved = _get_int(v, "reserved", 0)
+            available = max(0, stock - reserved)
+
+            if available < qty:
+                return False, f"Out of stock. Available: {available}"
+
+            v["reserved"] = reserved + qty
+
+        # ---------------- PRODUCT-LEVEL LOGIC ----------------
+        else:
+            stock = _get_int(p, "stock", 0)
+            reserved = _get_int(p, "reserved", 0)
+            available = max(0, stock - reserved)
+
+            if available < qty:
+                return False, f"Out of stock. Available: {available}"
+
+            p["reserved"] = reserved + qty
+
         _save_seller_products_raw(data)
 
-    _save_order_patch(order_id, {"sku": sku, "inv_qty": qty, "inv_reserved": True, "inv_deducted": False})
-    return True, "ok"
+    # Persist reservation info into the order
+    _save_order_patch(
+        order_id,
+        {
+            "sku": sku,
+            "inv_qty": qty,
+            "inv_reserved": True,
+            "inv_deducted": False,
+        },
+    )
 
+    return True, "ok"
 
 def confirm_payment(order_id: str) -> Tuple[bool, str]:
     """
@@ -234,33 +281,55 @@ def confirm_payment(order_id: str) -> Tuple[bool, str]:
 
     sku = str(o.get("sku") or "").strip()
     qty = max(1, int(o.get("inv_qty") or o.get("qty") or 1))
+    base_sku, var_id = split_sku_variant(sku)
 
     # Built-in items -> skip
     preview = _load_seller_products_raw()
-    if _find_seller_product_mut(preview, sku) is None:
+    if _find_seller_product_mut(preview, base_sku) is None:
         _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": False})
         return True, "ok"
 
     with FileLock(_LOCK_PATH):
         data = _load_seller_products_raw()
-        p = _find_seller_product_mut(data, sku)
+        p = _find_seller_product_mut(data, base_sku)
         if not p:
             _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": False})
             return True, "ok"
 
         _ensure_fields(p)
-        stock = _get_int(p, "stock", 0)
-        reserved = _get_int(p, "reserved", 0)
 
-        if reserved < qty:
-            available_now = max(0, stock - reserved)
-            return False, f"Reservation missing. Available now: {available_now}"
+        # -------- VARIATION DEDUCTION --------
+        if var_id:
+            v = _find_variant_mut(p, var_id)
+            if not v:
+                return False, "Variation not found"
 
-        if stock < qty:
-            return False, f"Stock inconsistent. Stock: {stock}, need: {qty}"
+            stock = _get_int(v, "stock", 0)
+            reserved = _get_int(v, "reserved", 0)
 
-        p["reserved"] = max(0, reserved - qty)
-        p["stock"] = max(0, stock - qty)
+            if reserved < qty:
+                return False, "Reservation missing"
+            if stock < qty:
+                return False, "Stock inconsistent"
+        
+
+            v["reserved"] = max(0, reserved - qty)
+            v["stock"] = max(0, stock - qty)
+
+        # -------- PRODUCT-LEVEL DEDUCTION --------
+        else:
+            stock = _get_int(p, "stock", 0)
+            reserved = _get_int(p, "reserved", 0)
+
+            if reserved < qty:
+                return False, "Reservation missing"
+            if stock < qty:
+                return False, "Stock inconsistent"
+            
+            
+            p["reserved"] = max(0, reserved - qty)
+            p["stock"] = max(0, stock - qty)
+
         _save_seller_products_raw(data)
 
     _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": True})
@@ -270,8 +339,7 @@ def confirm_payment(order_id: str) -> Tuple[bool, str]:
 def release_on_failure_or_refund(order_id: str, reason: str = "failed") -> Tuple[bool, str]:
     """
     Restore stock on refund / failed payment.
-    If reserved: reserved -= qty
-    If deducted: stock += qty
+    Supports variations.
     """
     o = _get_order(order_id)
     if not o:
@@ -281,29 +349,43 @@ def release_on_failure_or_refund(order_id: str, reason: str = "failed") -> Tuple
     qty = max(1, int(o.get("inv_qty") or o.get("qty") or 1))
     was_reserved = bool(o.get("inv_reserved", False))
     was_deducted = bool(o.get("inv_deducted", False))
+    base_sku, var_id = split_sku_variant(sku)
 
-    # Built-in items -> skip
     preview = _load_seller_products_raw()
-    if _find_seller_product_mut(preview, sku) is None:
+    if _find_seller_product_mut(preview, base_sku) is None:
         _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
         return True, "ok"
 
     with FileLock(_LOCK_PATH):
         data = _load_seller_products_raw()
-        p = _find_seller_product_mut(data, sku)
+        p = _find_seller_product_mut(data, base_sku)
         if not p:
             _save_order_patch(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
             return True, "ok"
 
         _ensure_fields(p)
-        stock = _get_int(p, "stock", 0)
-        reserved = _get_int(p, "reserved", 0)
 
-        if was_reserved and reserved >= qty:
-            p["reserved"] = max(0, reserved - qty)
+        # -------- VARIATION RESTORE --------
+        if var_id:
+            v = _find_variant_mut(p, var_id)
+            if v:
+                stock = _get_int(v, "stock", 0)
+                reserved = _get_int(v, "reserved", 0)
 
-        if was_deducted:
-            p["stock"] = max(0, stock + qty)
+                if was_reserved and reserved >= qty:
+                    v["reserved"] = max(0, reserved - qty)
+                if was_deducted:
+                    v["stock"] = max(0, stock + qty)
+
+        # -------- PRODUCT-LEVEL RESTORE --------
+        else:
+            stock = _get_int(p, "stock", 0)
+            reserved = _get_int(p, "reserved", 0)
+
+            if was_reserved and reserved >= qty:
+                p["reserved"] = max(0, reserved - qty)
+            if was_deducted:
+                p["stock"] = max(0, stock + qty)
 
         _save_seller_products_raw(data)
 
@@ -316,3 +398,80 @@ def check_stock(sku: str, qty: int):
     Some modules still call inventory.check_stock().
     """
     return check_available(sku, qty)
+
+# -------------------------
+# Product Variations Support
+# -------------------------
+
+def split_sku_variant(sku: str) -> tuple[str, str | None]:
+    s = (sku or "").strip()
+    if "|" in s:
+        base, var_id = s.split("|", 1)
+        return base.strip(), var_id.strip() or None
+    return s, None
+
+
+def _find_variant_mut(product: dict, var_id: str) -> dict | None:
+    vars_ = product.get("variations") or []
+    for v in vars_:
+        if str(v.get("id")) == var_id:
+            if "stock" not in v:
+                v["stock"] = 0
+            if "reserved" not in v:
+                v["reserved"] = 0
+            if "price_delta" not in v:
+                v["price_delta"] = 0
+            return v
+    return None
+
+
+def list_variations(base_sku: str) -> list[dict]:
+    data = _load_seller_products_raw()
+    p = _find_seller_product_mut(data, base_sku)
+    if not p:
+        return []
+    vars_ = p.get("variations") or []
+    out = []
+    for v in vars_:
+        out.append({
+            "id": str(v.get("id", "")),
+            "name": str(v.get("name", "")),
+            "stock": int(v.get("stock", 0) or 0),
+            "reserved": int(v.get("reserved", 0) or 0),
+            "price_delta": float(v.get("price_delta", 0) or 0),
+        })
+    return out
+
+
+def set_variations(base_sku: str, variations: list[dict]) -> bool:
+    base_sku = (base_sku or "").strip()
+    with FileLock(_LOCK_PATH):
+        data = _load_seller_products_raw()
+        p = _find_seller_product_mut(data, base_sku)
+        if not p:
+            return False
+
+        # normalize
+        clean = []
+        for v in variations:
+            vid = str(v.get("id", "")).strip()
+            name = str(v.get("name", "")).strip()
+            if not vid or not name:
+                continue
+            clean.append({
+                "id": vid,
+                "name": name,
+                "stock": max(0, int(v.get("stock", 0) or 0)),
+                "reserved": max(0, int(v.get("reserved", 0) or 0)),
+                "price_delta": float(v.get("price_delta", 0) or 0),
+            })
+
+        p["variations"] = clean
+
+        # optional: keep product-level stock as 0 when variations exist
+        if clean:
+            p["stock"] = 0
+            p["reserved"] = 0
+
+        _save_seller_products_raw(data)
+        return True
