@@ -117,6 +117,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, sku, qty = data.split(":")
             return await ui.show_nets_qr(update, context, sku, int(qty))
 
+        # Crypto Functions
+        if data == "wallet:deposit":
+            return await wallet.show_deposit_info(update, context)
+
+        if data == "wallet:withdraw":
+            return await wallet.start_withdraw_flow(update, context)
+
+        if data == "wallet:confirm_withdraw":
+            return await wallet.confirm_withdraw(update, context)
+
         # ==========================
         # CART SYSTEM
         # ==========================
@@ -253,10 +263,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results = storage.search_users(text)
         return await ui.show_user_search_results(update, context, results)
 
+    mode = context.user_data.get("awaiting_search")
+
+    if mode == "products":
+        context.user_data["awaiting_search"] = None
+        results = ui.search_products_by_name(text)
+        return await ui.show_search_results(update, context, results)
+
+    if mode == "users":
+        context.user_data["awaiting_search"] = None
+        results = storage.search_users(text)   # YOU MUST HAVE THIS
+        return await ui.show_user_search_results(update, context, results)
+
+
     results = ui.search_products_by_name(text)
     return await ui.show_search_results(update, context, results)
 
-    return await msg.reply_text("Send /start to open the marketplace.")
+    
 
 
 # ==========================
