@@ -2,6 +2,9 @@ import os
 import json
 import time
 from typing import Dict, List
+from modules import inventory
+
+PENDING_STATUSES = {"pending", "awaiting_payment", "created"}
 
 # =========================================================
 # FILE PATHS
@@ -299,3 +302,69 @@ def clear_pending_notifications(user_id: int):
     data = _load_pending()
     data.pop(str(user_id), None)
     _save_pending(data)
+
+# -------------------------
+# Pending Order Management
+# -------------------------
+
+def _order_ts(o: dict) -> int:
+    try:
+        return int(o.get("ts", o.get("created_ts", 0)))
+    except Exception:
+        return 0
+
+
+def cancel_pending_order(order_id: str, actor_id: int, grace_seconds: int = 900):
+    orders = load_json(ORDERS_FILE)
+    if order_id not in orders:
+        return False, "Order not found"
+
+    o = orders[order_id]
+    status = str(o.get("status", "")).lower()
+
+    if status not in PENDING_STATUSES:
+        return False, "Order is not pending"
+
+    if actor_id not in (o.get("buyer_id"), o.get("seller_id")):
+        return False, "Not allowed"
+
+    ts = _order_ts(o)
+    if ts and int(time.time()) - ts > grace_seconds:
+        return False, "Grace period ended"
+
+    o["status"] = "cancelled"
+    o["cancel_reason"] = "cancelled_by_user"
+    o["cancelled_ts"] = int(time.time())
+    orders[order_id] = o
+    save_json(ORDERS_FILE, orders)
+
+    inventory.release_on_failure_or_refund(order_id, "cancelled_by_user")
+    return True, "Order cancelled"
+
+
+def expire_stale_pending_orders(grace_seconds: int = 900) -> int:
+    now = int(time.time())
+    orders = load_json(ORDERS_FILE)
+    expired = 0
+
+    for oid, o in list(orders.items()):
+        status = str(o.get("status", "")).lower()
+        if status not in PENDING_STATUSES:
+            continue
+
+        ts = _order_ts(o)
+        if not ts or now - ts <= grace_seconds:
+            continue
+
+        o["status"] = "expired"
+        o["cancel_reason"] = "grace_timeout"
+        o["cancelled_ts"] = now
+        orders[oid] = o
+        expired += 1
+
+        inventory.release_on_failure_or_refund(oid, "grace_timeout")
+
+    if expired:
+        save_json(ORDERS_FILE, orders)
+
+    return expired

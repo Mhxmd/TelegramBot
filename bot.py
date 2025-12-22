@@ -71,6 +71,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # MENUS
         if data.startswith("menu:"):
             return await ui.on_menu(update, context)
+        
+        # ORDER CANCEL (pending)
+        if data.startswith("ordercancel:"):
+            _, oid = data.split(":", 1)
+            uid = update.effective_user.id
+
+            ok, msg = storage.cancel_pending_order(oid, uid, grace_seconds=900)
+
+            await q.answer(msg, show_alert=not ok)
+
+            # refresh Orders menu
+            q.data = "menu:orders"
+            return await ui.on_menu(update, context)
 
         # SEARCH
         if data == "shop:search":
