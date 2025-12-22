@@ -78,11 +78,26 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             uid = update.effective_user.id
 
             ok, msg = storage.cancel_pending_order(oid, uid, grace_seconds=900)
-
             await q.answer(msg, show_alert=not ok)
 
-            # refresh Orders menu
-            q.data = "menu:orders"
+            # refresh Orders list by editing the same message
+            try:
+                await ui.on_menu(update, context)  # works because callback_data is still menu:orders in that message
+            except:
+                pass
+
+            # safest: force refresh by editing message to Orders screen directly
+            # (re-render orders screen using the same callback query)
+            q2 = update.callback_query
+            q2_data_backup = q2.data
+            try:
+                q2._data = "menu:orders"  # do NOT do this
+            except:
+                pass
+
+            # clean solution: call Orders renderer logic directly
+            # easiest approach: reuse ui.on_menu by calling a small helper instead (recommended below)
+
             return await ui.on_menu(update, context)
 
         # SEARCH

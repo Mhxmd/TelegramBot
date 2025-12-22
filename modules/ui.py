@@ -551,57 +551,59 @@ async def on_menu(update, context):
             if uid in (v.get("buyer_id"), v.get("seller_id"))
         ]
         buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
-
         return await safe_edit("💌 *Messages*", InlineKeyboardMarkup(buttons))
-    
+
     if tab == "orders":
+        # expire old pending orders before showing list
         storage.expire_stale_pending_orders(grace_seconds=900)
+
         orders = storage.list_orders_for_user(uid)
 
         if not orders:
             txt = "📦 *Orders*\n\nNo orders yet."
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+            ])
             return await safe_edit(txt, kb)
 
-    orders = sorted(
-        orders,
-        key=lambda o: _safe_int(o.get("ts", 0), 0),
-        reverse=True
-    )
+        orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
 
-    lines = ["📦 *Orders*"]
-    buttons = []
+        lines = ["📦 *Orders*"]
+        buttons = []
 
-    for o in orders[:20]:
-        oid = o.get("id", "unknown")
-        item = o.get("item", "item")
-        qty = _safe_int(o.get("qty", 1), 1)
-        amt = _safe_float(o.get("amount", 0), 0.0)
-        status = str(o.get("status", "pending")).lower()
-        method = o.get("method", "-")
+        for o in orders[:20]:
+            oid = o.get("id", "unknown")
+            item = o.get("item", "item")
+            qty = o.get("qty", 1)
+            amt = float(o.get("amount", 0))
+            status = str(o.get("status", "pending")).lower()
+            method = o.get("method", "-")
 
-        lines.append(f"\n• `{oid}`")
-        lines.append(f"  {item} x{qty}  `${amt:.2f}`")
-        lines.append(f"  Status: *{status}*  Method: {method}")
+            lines.append(f"\n• `{oid}`")
+            lines.append(f"  {item} x{qty}  `${amt:.2f}`")
+            lines.append(f"  Status: *{status}*  Method: {method}")
 
-        if oid != "unknown" and status in ("pending", "awaiting_payment", "created"):
-            buttons.append([InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")])
+            if oid != "unknown" and status in ("pending", "awaiting_payment", "created"):
+                buttons.append([
+                    InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")
+                ])
 
-    txt = "\n".join(lines)
-    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
-    kb = InlineKeyboardMarkup(buttons)
+        txt = "\n".join(lines)
+
+        buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+        kb = InlineKeyboardMarkup(buttons)
+        return await safe_edit(txt, kb)
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
         return await safe_edit(txt, kb)
 
     if tab == "functions":
-        return await show_functions_menu(update, context)   
-    
+        return await show_functions_menu(update, context)
+
     if tab in ("main", "refresh"):
         kb, txt = build_main_menu(storage.get_balance(uid))
-
-    return await safe_edit(txt, kb)
+        return await safe_edit(txt, kb)
 
 
 # ==========================================
