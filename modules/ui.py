@@ -1,5 +1,3 @@
-
-
 import os
 import qrcode
 from io import BytesIO
@@ -28,7 +26,8 @@ CATALOG = {
     "blackcap": {"name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0, "desc": "Matte black cap."},
 }
 
-def clamp_qty(q): return max(1, min(int(q), 99))
+def clamp_qty(q): 
+    return max(1, min(int(q), 99))
 
 # ==========================================
 # PRODUCT LOADING
@@ -57,8 +56,6 @@ def get_any_product_by_sku(sku: str):
     return None
 
 
-
-
 # ==========================================
 # SEARCH
 # ==========================================
@@ -70,6 +67,7 @@ def search_products_by_name(query: str):
             results.append(it)
     return results
 
+
 async def ask_user_search(update, context):
     q = update.callback_query
     context.user_data["awaiting_search"] = "users"
@@ -79,6 +77,7 @@ async def ask_user_search(update, context):
         parse_mode="Markdown",
     )
 
+
 async def ask_search(update, context):
     q = update.callback_query
     context.user_data["awaiting_search"] = "products"
@@ -87,6 +86,7 @@ async def ask_search(update, context):
         "🔍 *Search Products*\n\nSend a product name.",
         parse_mode="Markdown",
     )
+
 
 async def show_user_search_results(update, context, results):
     msg = update.effective_message
@@ -102,7 +102,6 @@ async def show_user_search_results(update, context, results):
         uname = u.get("username") or "unknown"
         role = u.get("role", "buyer")
 
-        # list items sold by this user
         items = storage.list_seller_products(uid)
 
         if items:
@@ -131,17 +130,16 @@ async def show_user_search_results(update, context, results):
         parse_mode="Markdown",
     )
 
+
 # ==========================================
 # MAIN MENU
 # ==========================================
 def build_main_menu(balance: float, uid: int = None):
-    # get cart count
     cart_count = 0
     if uid:
         cart = shopping_cart.get_user_cart(uid)
         cart_count = sum(item["qty"] for item in cart.values())
 
-    # NEW: always show Cart (0)
     cart_label = f"🛒 Cart ({cart_count})"
 
     kb = InlineKeyboardMarkup([
@@ -166,10 +164,8 @@ def build_main_menu(balance: float, uid: int = None):
     return kb, text
 
 
-
-
 # ==========================================
-# SHOP PAGE (UPDATED WITH NEW ADD TO CART)
+# SHOP PAGE
 # ==========================================
 def build_shop_keyboard(uid=None):
     items = enumerate_all_products()
@@ -187,7 +183,6 @@ def build_shop_keyboard(uid=None):
             f"{it.get('emoji','🛍')} *{it['name']}* — `${price:.2f}`"
         )
 
-        # NEW: correct label per item
         if qty_in_cart > 0:
             cart_btn = InlineKeyboardButton(
                 f"🛒 Add to Cart ({qty_in_cart})",
@@ -217,329 +212,9 @@ def build_shop_keyboard(uid=None):
     return txt, InlineKeyboardMarkup(rows)
 
 
-
-
-# ==========================================
-# CART CHECKOUT (ALL ITEMS)
-# ==========================================
-async def cart_checkout_all(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
-
-    cart = shopping_cart.get_user_cart(uid)
-    if not cart:
-        return await q.answer("Your cart is empty.", show_alert=True)
-
-    total = sum(item["price"] * item["qty"] for item in cart.values())
-
-    txt = (
-        "🧾 *Cart Checkout*\n\n"
-        f"• Total: *${total:.2f}*\n\n"
-        "_Choose payment method:_"
-    )
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
-        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
-    ])
-
-    return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
-
-
-
-# ==========================================
-# NETS QR (CART)
-# ==========================================
-async def show_nets_cart(update, context, total):
-    from modules.nets_qr import generate_nets_qr
-
-    q = update.callback_query
-    qr_img, ref = await generate_nets_qr(float(total))
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
-    ])
-
-    await q.message.reply_photo(
-        photo=InputFile(qr_img, filename=f"nets_cart_{ref}.png"),
-        caption=f"🟦 *NETS QR — Cart*\nTotal: *${total}*\nRef: `{ref}`",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-
-# ==========================================
-# SINGLE ITEM BUY — UI
-# ==========================================
-async def on_buy(update, context, sku, qty):
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-
-    if not item:
-        return await q.answer("Item missing", show_alert=True)
-
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
-        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
-    ])
-
-    txt = (
-        f"{item.get('emoji')} *{item['name']}*\n"
-        f"Qty: *{qty}*\nTotal: *${total:.2f}*"
-    )
-
-    await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
-
-
-# ==========================================
-# QUANTITY CHANGE SCREEN
-# ==========================================
-async def on_qty(update, context, sku, qty):
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("−", callback_data=f"qty:{sku}:{qty-1}"),
-            InlineKeyboardButton(f"Qty: {qty}", callback_data="noop"),
-            InlineKeyboardButton("+", callback_data=f"qty:{sku}:{qty+1}"),
-        ],
-        [InlineKeyboardButton("✅ Checkout", callback_data=f"checkout:{sku}:{qty}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
-    ])
-
-    await q.edit_message_text(
-        f"{item['name']} • Qty {qty}\nTotal ${total:.2f}",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
-
-
-# ==========================================
-# CHECKOUT → calls BUY screen again
-# ==========================================
-async def on_checkout(update, context, sku, qty):
-    return await on_buy(update, context, sku, qty)
-
-
-# ==========================================
-# STRIPE — SINGLE ITEM
-# ==========================================
-async def create_stripe_checkout(update, context, sku, qty):
-    import requests
-
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-    user_id = update.effective_user.id
-    import time
-    order_id = f"ord_{user_id}_{int(time.time())}"
-
-
-    try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-
-        res = requests.post(
-            f"{SERVER_BASE}/create_checkout_session",
-            json={
-            "order_id": order_id,
-            "amount": total,
-            "user_id": user_id
-            },
-            timeout=15
-        )
-
-        res.raise_for_status()   # 👈 catches 4xx / 5xx properly
-        data = res.json()
-        checkout_url = data["checkout_url"]
-
-    except Exception as e:
-        return await q.edit_message_text(f"❌ Stripe error: {e}")
-
-
-    storage.add_order(user_id, item["name"], qty, total, "Stripe", int(item.get("seller_id", 0)))
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay Now", url=checkout_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
-    ])
-
-    await q.edit_message_text(
-        f"*Stripe Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
-
-#HitPay Checkout - Single Item
-
-async def create_hitpay_checkout(update, context, sku, qty):
-    import requests, time
-
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-    user_id = update.effective_user.id
-    order_id = f"ord_{user_id}_{int(time.time())}"
-
-    try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-
-        res = requests.post(
-            f"{SERVER_BASE}/hitpay/create_payment",
-            json={
-                "order_id": order_id,
-                "amount": total,
-                "user_id": user_id,
-                "description": item["name"],
-            },
-            timeout=15,
-        )
-        res.raise_for_status()
-        data = res.json()
-        payment_url = data.get("checkout_url")
-
-        if not payment_url:
-            raise Exception(f"Invalid HitPay response: {data}")
-
-
-    except Exception as e:
-        return await q.edit_message_text(f"❌ HitPay error: {e}")
-
-    storage.add_order(
-        user_id,
-        item["name"],
-        qty,
-        total,
-        "HitPay",
-        int(item.get("seller_id", 0)),
-    )
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇸🇬 Pay with PayNow", url=payment_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
-    ])
-
-    await q.edit_message_text(
-        f"*HitPay Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
-
-#HitPay Checkout - Cart
-
-async def create_hitpay_cart_checkout(update, context, total):
-    import requests, time
-
-    q = update.callback_query
-    user_id = update.effective_user.id
-    order_id = f"cart_{user_id}_{int(time.time())}"
-
-    try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-
-        res = requests.post(
-            f"{SERVER_BASE}/hitpay/create_payment",
-            json={
-                "order_id": order_id,
-                "amount": float(total),
-                "user_id": user_id,
-                "description": "Cart Checkout",
-            },
-            timeout=15,
-        )
-        res.raise_for_status()
-        data = res.json()
-        payment_url = data["payment_url"]
-
-    except Exception as e:
-        return await q.edit_message_text(f"❌ HitPay error: {e}")
-
-    storage.add_order(
-        user_id,
-        "Cart Items",
-        1,
-        float(total),
-        "HitPay",
-        0,
-    )
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇸🇬 Pay with PayNow", url=payment_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
-    ])
-
-    await q.edit_message_text(
-        f"*HitPay Cart Checkout*\nTotal: ${float(total):.2f}",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
-
-
-
-
-# ==========================================
-# NETS — SINGLE ITEM
-# ==========================================
-async def show_nets_qr(update, context, sku, qty):
-    from modules.nets_qr import generate_nets_qr
-
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-
-    qr_img, ref = await generate_nets_qr(total)
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
-    ])
-
-    await q.message.reply_photo(
-        photo=InputFile(qr_img, filename=f"nets_{ref}.png"),
-        caption=f"NETS Payment\nAmount: ${total:.2f}\nRef: `{ref}`",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-
 # ==========================================
 # MENU ROUTER
 # ==========================================
-def _safe_int(v, default=0):
-    try:
-        return int(v)
-    except Exception:
-        try:
-            return int(float(v))
-        except Exception:
-            return default
-
-def _safe_float(v, default=0.0):
-    try:
-        return float(v)
-    except Exception:
-        try:
-            s = str(v)
-            s = s.replace("$", "").replace("SGD", "").strip()
-            return float(s)
-        except Exception:
-            return default
-
 async def on_menu(update, context):
     q = update.callback_query
     _, tab = q.data.split(":", 1)
@@ -552,7 +227,6 @@ async def on_menu(update, context):
             return await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
 
     if tab == "shop":
-        uid = update.effective_user.id
         txt, kb = build_shop_keyboard(uid)
         return await safe_edit(txt, kb)
 
@@ -585,16 +259,12 @@ async def on_menu(update, context):
         return await safe_edit("💌 *Messages*", InlineKeyboardMarkup(buttons))
 
     if tab == "orders":
-        # expire old pending orders before showing list
         storage.expire_stale_pending_orders(grace_seconds=900)
-
         orders = storage.list_orders_for_user(uid)
 
         if not orders:
             txt = "📦 *Orders*\n\nNo orders yet."
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
-            ])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
             return await safe_edit(txt, kb)
 
         orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
@@ -619,27 +289,16 @@ async def on_menu(update, context):
                     InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")
                 ])
 
-            # Archive button (always available)
             if oid != "unknown":
                 buttons.append([
-                InlineKeyboardButton(
-                    f"🗄 Archive {oid}",
-                    callback_data=f"orderarchive:{oid}"
-                )
-            ])
+                    InlineKeyboardButton(f"🗄 Archive {oid}", callback_data=f"orderarchive:{oid}")
+                ])
 
-        txt = "\n".join(lines)
+        lines.append("")
+        buttons.append([InlineKeyboardButton("🧹 Unarchive all", callback_data="orderunarchiveall")])
+        buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
 
-        # Utility buttons
-        buttons.append([
-            InlineKeyboardButton("🧹 Unarchive all", callback_data="orderunarchiveall")
-        ])
-        buttons.append([
-            InlineKeyboardButton("🏠 Home", callback_data="menu:main")
-        ])
-
-        kb = InlineKeyboardMarkup(buttons)
-        return await safe_edit(txt, kb)
+        return await safe_edit("\n".join(lines), InlineKeyboardMarkup(buttons))
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
@@ -664,7 +323,7 @@ async def show_functions_menu(update, context):
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
 
-    await q.edit_message_text(
+    return await q.edit_message_text(
         "⚙️ *Functions Panel*\nAdmin tools + utilities.",
         reply_markup=kb,
         parse_mode="Markdown",
