@@ -21,8 +21,16 @@ from solders.message import Message
 # =========================
 # CONFIG
 # =========================
-SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.devnet.solana.com")
-solana_client = Client(SOLANA_RPC)
+
+SOLANA_DEVNET_RPC = "https://api.devnet.solana.com"
+SOLANA_MAINNET_RPC = "https://api.mainnet-beta.solana.com"
+
+# Clients
+solana_devnet = Client(SOLANA_DEVNET_RPC)
+solana_mainnet = Client(SOLANA_MAINNET_RPC)
+
+# 🔒 PoC SAFETY: sending is DEVNET ONLY
+solana_client = solana_devnet
 
 WALLETS_FILE = "wallets.json"     # custodial wallets (PoC only)
 WITHDRAW_STATE = {}               # in-memory FSM
@@ -57,15 +65,33 @@ def ensure_user_wallet(user_id: int):
     return data[uid]
 
 # ============================================================
-# On-chain balance
+# On-chain balances
 # ============================================================
-def get_balance_sol(pubkey: str) -> float:
+def get_balance_devnet(pubkey: str) -> float:
     try:
-        resp = solana_client.get_balance(Pubkey.from_string(pubkey))
-        return resp["result"]["value"] / 1e9
+        r = solana_devnet.get_balance(Pubkey.from_string(pubkey))
+        return r["result"]["value"] / 1e9
     except Exception as e:
-        logger.error(f"Balance error: {e}")
+        logger.error(f"Devnet balance error: {e}")
         return 0.0
+
+
+def get_balance_both(pubkey: str):
+    out = {"devnet": 0.0, "mainnet": 0.0}
+
+    try:
+        r = solana_devnet.get_balance(Pubkey.from_string(pubkey))
+        out["devnet"] = r["result"]["value"] / 1e9
+    except Exception as e:
+        logger.error(f"Devnet balance error: {e}")
+
+    try:
+        r = solana_mainnet.get_balance(Pubkey.from_string(pubkey))
+        out["mainnet"] = r["result"]["value"] / 1e9
+    except Exception as e:
+        logger.error(f"Mainnet balance error: {e}")
+
+    return out
 
 # ============================================================
 # Deposit UI
@@ -76,29 +102,42 @@ async def show_sol_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wallet = ensure_user_wallet(uid)
     pub = wallet["public_key"]
-    bal = get_balance_sol(pub)
+    balances = get_balance_both(pub)
 
     text = (
         f"📥 *Your Solana Wallet*\n\n"
-        f"Address:\n`{pub}`\n"
-        f"Balance: *{bal:.4f} SOL*\n\n"
-        "_Send SOL to this address (Devnet)._"
+        f"Address:\n`{pub}`\n\n"
+        f"🧪 *Devnet Balance:* `{balances['devnet']:.4f} SOL`\n"
+        f"🌍 *Mainnet Balance:* `{balances['mainnet']:.4f} SOL`\n\n"
+        "_Devnet is used for testing (faucet supported)._"
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 View on Solscan",
-                              url=f"https://solscan.io/account/{pub}?cluster=devnet")],
+        [
+            InlineKeyboardButton(
+                "🔗 View Devnet",
+                url=f"https://solscan.io/account/{pub}?cluster=devnet"
+            ),
+            InlineKeyboardButton(
+                "🔗 View Mainnet",
+                url=f"https://solscan.io/account/{pub}"
+            ),
+        ],
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
     ])
 
-    await q.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    await q.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.MARKDOWN
+    )
 
 
 async def show_deposit_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_sol_address(update, context)
 
 # ============================================================
-# Withdraw FSM
+# Withdraw FSM (DEVNET ONLY)
 # ============================================================
 def is_in_withdraw_flow(user_id: int) -> bool:
     return user_id in WITHDRAW_STATE
@@ -111,7 +150,7 @@ async def start_withdraw_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     WITHDRAW_STATE[uid] = {"step": "recipient"}
 
     await q.edit_message_text(
-        "📤 *Withdraw SOL*\n\nSend the *recipient wallet address:*",
+        "📤 *Withdraw SOL (Devnet)*\n\nSend the *recipient wallet address:*",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -143,7 +182,7 @@ async def handle_withdraw_flow(update: Update, context: ContextTypes.DEFAULT_TYP
             ])
 
             await update.message.reply_text(
-                f"⚠️ Send *{amt:.4f} SOL* to:\n`{state['target']}`",
+                f"⚠️ Send *{amt:.4f} SOL (Devnet)* to:\n`{state['target']}`",
                 reply_markup=kb,
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -167,13 +206,13 @@ async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"❌ Failed: {result['error']}")
     else:
         await q.edit_message_text(
-            "✅ Transaction submitted!\n"
+            "✅ Transaction submitted (Devnet)!\n"
             f"[View on Solscan](https://solscan.io/account/{state['target']}?cluster=devnet)",
             parse_mode=ParseMode.MARKDOWN,
         )
 
 # ============================================================
-# Core blockchain transaction (FIXED)
+# Core blockchain transaction (DEVNET ONLY)
 # ============================================================
 def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
     try:
@@ -182,7 +221,7 @@ def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
         sender = Keypair.from_bytes(base58.b58decode(sender_privkey))
         to_pubkey = Pubkey.from_string(recipient_pubkey)
 
-        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        blockhash = solana_devnet.get_latest_blockhash()["result"]["value"]["blockhash"]
 
         ix = transfer(sender.pubkey(), to_pubkey, lamports)
 
@@ -198,7 +237,7 @@ def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
             recent_blockhash=blockhash
         )
 
-        return solana_client.send_transaction(tx)
+        return solana_devnet.send_transaction(tx)
 
     except Exception as e:
         logger.error(f"send_sol error: {e}")
