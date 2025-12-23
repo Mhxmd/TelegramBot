@@ -134,11 +134,20 @@ async def show_user_search_results(update, context, results):
 # ==========================================
 # MAIN MENU
 # ==========================================
-def build_main_menu(balance: float):
+def build_main_menu(balance: float, uid: int = None):
+    # get cart count
+    cart_count = 0
+    if uid:
+        cart = shopping_cart.get_user_cart(uid)
+        cart_count = sum(item["qty"] for item in cart.values())
+
+    # NEW: always show Cart (0)
+    cart_label = f"🛒 Cart ({cart_count})"
+
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop"),
          InlineKeyboardButton("📦 Orders", callback_data="menu:orders")],
-        [InlineKeyboardButton("🛒 Cart", callback_data="cart:view"),
+        [InlineKeyboardButton(cart_label, callback_data="cart:view"),
          InlineKeyboardButton("💼 Wallet", callback_data="menu:wallet")],
         [InlineKeyboardButton("🛠 Sell", callback_data="menu:sell"),
          InlineKeyboardButton("✉ Messages", callback_data="menu:messages")],
@@ -157,11 +166,14 @@ def build_main_menu(balance: float):
     return kb, text
 
 
+
+
 # ==========================================
 # SHOP PAGE (UPDATED WITH NEW ADD TO CART)
 # ==========================================
-def build_shop_keyboard():
+def build_shop_keyboard(uid=None):
     items = enumerate_all_products()
+    cart = shopping_cart.get_user_cart(uid) if uid else {}
 
     rows = []
     display_lines = []
@@ -169,12 +181,27 @@ def build_shop_keyboard():
     for it in items:
         sku = it["sku"]
         price = it["price"]
+        qty_in_cart = cart.get(sku, {}).get("qty", 0)
 
-        display_lines.append(f"{it.get('emoji','🛍')} *{it['name']}* — `${price:.2f}`")
+        display_lines.append(
+            f"{it.get('emoji','🛍')} *{it['name']}* — `${price:.2f}`"
+        )
+
+        # NEW: correct label per item
+        if qty_in_cart > 0:
+            cart_btn = InlineKeyboardButton(
+                f"🛒 Add to Cart ({qty_in_cart})",
+                callback_data=f"cart:add:{sku}"
+            )
+        else:
+            cart_btn = InlineKeyboardButton(
+                "🛒 Add to Cart",
+                callback_data=f"cart:add:{sku}"
+            )
 
         rows.append([
             InlineKeyboardButton(f"💰 Buy ${price:.2f}", callback_data=f"buy:{sku}:1"),
-            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart:add:{sku}"),
+            cart_btn,
             InlineKeyboardButton("💬 Contact Seller", callback_data=f"contact:{sku}:{it.get('seller_id',0)}"),
         ])
 
@@ -187,6 +214,8 @@ def build_shop_keyboard():
         + ("\n".join(display_lines) if display_lines else "_No items yet._")
     )
     return txt, InlineKeyboardMarkup(rows)
+
+
 
 
 # ==========================================
@@ -522,7 +551,8 @@ async def on_menu(update, context):
             return await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
 
     if tab == "shop":
-        txt, kb = build_shop_keyboard()
+        uid = update.effective_user.id
+        txt, kb = build_shop_keyboard(uid)
         return await safe_edit(txt, kb)
 
     if tab == "cart":
@@ -618,7 +648,7 @@ async def on_menu(update, context):
         return await show_functions_menu(update, context)
 
     if tab in ("main", "refresh"):
-        kb, txt = build_main_menu(storage.get_balance(uid))
+        kb, txt = build_main_menu(storage.get_balance(uid), uid)
         return await safe_edit(txt, kb)
 
 

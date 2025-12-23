@@ -1,8 +1,8 @@
 import os
 import json
 import time
-from typing import Dict, List
 from modules import inventory
+from typing import List, Dict, Tuple, Set
 
 PENDING_STATUSES = {"pending", "awaiting_payment", "created"}
 
@@ -21,10 +21,10 @@ USERS_FILE = "users.json"
 # =========================================================
 # RUNTIME STATE (IN-MEMORY)
 # =========================================================
-last_message_time = {}
-user_flow_state = {}
-active_private_chats = {}
-active_public_chat = set()
+last_message_time: Dict[int, float] = {}
+user_flow_state: Dict[int, dict] = {}
+active_private_chats: Dict[int, str] = {}
+active_public_chat: Set[int] = set()
 
 
 # =========================================================
@@ -32,7 +32,7 @@ active_public_chat = set()
 # =========================================================
 FILES_AND_DEFAULTS = {
     BALANCES_FILE: {},
-    ORDERS_FILE: {},                 # 🔒 orders stored as {order_id: order}
+    ORDERS_FILE: {},                 
     ROLES_FILE: {},
     SELLER_PRODUCTS_FILE: {},
     MESSAGES_FILE: {},
@@ -121,12 +121,8 @@ def update_order_status(order_id: str, status: str):
         save_json(ORDERS_FILE, orders)
 
 def get_user_orders(user_id: int) -> Dict[str, dict]:
-    """
-    Returns all orders where user is buyer or seller
-    Output: {order_id: order}
-    """
     orders = load_json(ORDERS_FILE)
-    result = {}
+    result: Dict[str, dict] = {}
 
     for oid, o in orders.items():
         if o.get("buyer_id") == user_id or o.get("seller_id") == user_id:
@@ -134,23 +130,23 @@ def get_user_orders(user_id: int) -> Dict[str, dict]:
 
     return result
 
-def list_orders_for_user(user_id: int) -> list[dict]:
+def list_orders_for_user(user_id: int) -> List[Dict]:
     orders = load_json(ORDERS_FILE)
-    out = []
+    out: List[Dict] = []
 
     for oid, o in orders.items():
         if o.get("buyer_id") == user_id or o.get("seller_id") == user_id:
             if is_archived_for_user(o, user_id):
                 continue
-            o = dict(o)
-            o["id"] = oid
-            out.append(o)
+            obj = dict(o)
+            obj["id"] = oid
+            out.append(obj)
 
     return out
 
 def get_all_disputed_orders() -> Dict[str, dict]:
     orders = load_json(ORDERS_FILE)
-    disputes = {}
+    disputes: Dict[str, dict] = {}
 
     for oid, o in orders.items():
         if o.get("status") == "disputed":
@@ -170,9 +166,9 @@ def set_role(user_id: int, role: str):
     save_json(ROLES_FILE, roles)
 
 # =========================================================
-# USERS (REGISTRY FOR USER SEARCH)
+# USERS
 # =========================================================
-def ensure_user_exists(user_id: int, username: str | None):
+def ensure_user_exists(user_id: int, username: str):
     users = load_json(USERS_FILE)
     uid = str(user_id)
 
@@ -190,15 +186,14 @@ def ensure_user_exists(user_id: int, username: str | None):
 
     save_json(USERS_FILE, users)
 
-
-def search_users(query: str):
+def search_users(query: str) -> List[Dict]:
     q = query.lower().strip()
     users = load_json(USERS_FILE)
-    results = []
+    results: List[Dict] = []
 
     for uid, u in users.items():
-        username = (u.get("username") or "").lower()
-        if q in uid or (username and q in username):
+        uname = (u.get("username") or "").lower()
+        if q in uid or (uname and q in uname):
             results.append({
                 "user_id": int(uid),
                 "username": u.get("username", "unknown"),
@@ -210,10 +205,10 @@ def search_users(query: str):
 # =========================================================
 # SELLER PRODUCTS
 # =========================================================
-def list_seller_products(seller_id: int):
+def list_seller_products(seller_id: int) -> List[Dict]:
     return load_json(SELLER_PRODUCTS_FILE).get(str(seller_id), [])
 
-def add_seller_product(seller_id: int, title: str, price: float, desc: str):
+def add_seller_product(seller_id: int, title: str, price: float, desc: str) -> str:
     data = load_json(SELLER_PRODUCTS_FILE)
     products = data.get(str(seller_id), [])
 
@@ -237,12 +232,12 @@ def add_seller_product(seller_id: int, title: str, price: float, desc: str):
 def get_thread(thread_id: str):
     return load_json(MESSAGES_FILE).get(thread_id)
 
-def save_thread(thread_id: str, thread_data: dict):
+def save_thread(thread_id: str, thread_data: Dict):
     threads = load_json(MESSAGES_FILE)
     threads[thread_id] = thread_data
     save_json(MESSAGES_FILE, threads)
 
-def create_thread(buyer_id: int, seller_id: int, product: dict) -> str:
+def create_thread(buyer_id: int, seller_id: int, product: Dict) -> str:
     thread_id = f"t_{int(time.time())}_{buyer_id}_{seller_id}"
     threads = load_json(MESSAGES_FILE)
 
@@ -274,7 +269,7 @@ def append_chat_message(thread_id: str, from_user: int, text: str):
     save_json(MESSAGES_FILE, threads)
 
 # =========================================================
-# PENDING NOTIFICATIONS
+# NOTIFICATIONS
 # =========================================================
 PENDING_FILE = os.path.join(os.path.dirname(__file__), "pending_notifications.json")
 
@@ -297,7 +292,7 @@ def add_pending_notification(user_id: int, message: str):
     data.setdefault(uid, []).append(message)
     _save_pending(data)
 
-def get_pending_notifications(user_id: int):
+def get_pending_notifications(user_id: int) -> List[str]:
     return _load_pending().get(str(user_id), [])
 
 def clear_pending_notifications(user_id: int):
@@ -309,14 +304,13 @@ def clear_pending_notifications(user_id: int):
 # Pending Order Management
 # -------------------------
 
-def _order_ts(o: dict) -> int:
+def _order_ts(o: Dict) -> int:
     try:
         return int(o.get("ts", o.get("created_ts", 0)))
     except Exception:
         return 0
 
-
-def cancel_pending_order(order_id: str, actor_id: int, grace_seconds: int = 900):
+def cancel_pending_order(order_id: str, actor_id: int, grace_seconds: int = 900) -> Tuple[bool, str]:
     orders = load_json(ORDERS_FILE)
     if order_id not in orders:
         return False, "Order not found"
@@ -371,15 +365,15 @@ def expire_stale_pending_orders(grace_seconds: int = 900) -> int:
 
     return expired
 
-# ----- Order archive (per user) -----
+# ----- Order archive -----
 
 def _arch_key(user_id: int) -> str:
     return f"archived_by_{int(user_id)}"
 
-def is_archived_for_user(order: dict, user_id: int) -> bool:
+def is_archived_for_user(order: Dict, user_id: int) -> bool:
     return bool(order.get(_arch_key(user_id), False))
 
-def archive_order_for_user(order_id: str, user_id: int) -> tuple[bool, str]:
+def archive_order_for_user(order_id: str, user_id: int) -> Tuple[bool, str]:
     orders = load_json(ORDERS_FILE)
     o = orders.get(order_id)
     if not o:

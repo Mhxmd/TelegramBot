@@ -147,19 +147,29 @@ async def change_quantity(update, context, sku, delta):
     uid = update.effective_user.id
     cart = get_user_cart(uid)
 
+    # If item exists, adjust qty
     if sku in cart:
         new_qty = cart[sku]["qty"] + delta
-        update_quantity(uid, sku, max(0, new_qty))
 
-    # 🔍 Detect whether this callback came from mini panel or full cart
+        # NEW RULE: if new qty <= 0 → remove item and return to shop
+        if new_qty <= 0:
+            remove_from_cart(uid, sku)
+
+            # Return to shop page, NOT full cart
+            from modules import ui
+            txt, kb = ui.build_shop_keyboard(uid)
+            return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+
+        # Normal update
+        update_quantity(uid, sku, new_qty)
+
+    # Detect if coming from mini-panel
     message_text = q.message.text or ""
-
     if "Added to cart!" in message_text:
-        # 👉 Update mini panel instead of opening cart
         return await show_add_to_cart_feedback(update, context, sku)
-    else:
-        # 👉 Normal behaviour — update full cart page
-        return await view_cart(update, context)
+
+    return await view_cart(update, context)
+
 
 
 async def remove_item(update, context, sku):
@@ -179,8 +189,11 @@ async def show_add_to_cart_feedback(update, context, sku):
     cart = get_user_cart(uid)
     item = cart.get(sku)
 
+    # If item was removed (qty = 0)
     if not item:
-        return await q.answer("Item missing", show_alert=True)
+        from modules import ui
+        txt, kb = ui.build_shop_keyboard(uid)
+        return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
 
     qty = item["qty"]
 
@@ -197,10 +210,9 @@ async def show_add_to_cart_feedback(update, context, sku):
     msg = f"✔ *Added to cart!* ({item['name']})\nQuantity: *{qty}*"
 
     return await q.edit_message_text(
-        msg,
-        parse_mode="Markdown",
-        reply_markup=kb
+        msg, parse_mode="Markdown", reply_markup=kb
     )
+
 
 
 

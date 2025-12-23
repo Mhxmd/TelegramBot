@@ -41,7 +41,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wallet.ensure_user_wallet(user_id)
 
     balance = storage.get_balance(user_id)
-    kb, text = ui.build_main_menu(balance)
+    
+    #UPDATED: pass user_id into build_main_menu()
+    kb, text = ui.build_main_menu(balance, user_id)
 
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
@@ -50,7 +52,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # SHOP COMMAND
 # ==========================
 async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    txt, kb = ui.build_shop_keyboard()
+    uid = update.effective_user.id
+    txt, kb = ui.build_shop_keyboard(uid)
     await update.message.reply_text(txt, reply_markup=kb, parse_mode="Markdown")
 
 
