@@ -207,6 +207,7 @@ def build_shop_keyboard(uid=None):
 
     rows.append([InlineKeyboardButton("🔍 Search Items", callback_data="shop:search")])
     rows.append([InlineKeyboardButton("👤 Search Users", callback_data="search:users")])
+    rows.append([InlineKeyboardButton("🛒 Go to Cart", callback_data="cart:view")])
     rows.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
 
     txt = (
