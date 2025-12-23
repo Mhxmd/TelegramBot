@@ -1,0 +1,16 @@
+python-telegram-bot==21.6
+python-dotenv
+qrcode
+pillow
+stripe
+requests
+fastapi
+uvicorn
+psycopg2-binary
+sqlalchemy
+pydantic
+starlette
+databases
+aiofiles
+python-multipart
+cryptography
