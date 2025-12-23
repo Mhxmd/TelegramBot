@@ -588,9 +588,25 @@ async def on_menu(update, context):
                     InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")
                 ])
 
+            # Archive button (always available)
+            if oid != "unknown":
+                buttons.append([
+                InlineKeyboardButton(
+                    f"🗄 Archive {oid}",
+                    callback_data=f"orderarchive:{oid}"
+                )
+            ])
+
         txt = "\n".join(lines)
 
-        buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+        # Utility buttons
+        buttons.append([
+            InlineKeyboardButton("🧹 Unarchive all", callback_data="orderunarchiveall")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🏠 Home", callback_data="menu:main")
+        ])
+
         kb = InlineKeyboardMarkup(buttons)
         return await safe_edit(txt, kb)
 

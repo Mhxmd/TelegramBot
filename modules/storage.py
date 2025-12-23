@@ -140,8 +140,10 @@ def list_orders_for_user(user_id: int) -> list[dict]:
 
     for oid, o in orders.items():
         if o.get("buyer_id") == user_id or o.get("seller_id") == user_id:
-            o = dict(o)          
-            o["id"] = oid        
+            if is_archived_for_user(o, user_id):
+                continue
+            o = dict(o)
+            o["id"] = oid
             out.append(o)
 
     return out
@@ -368,3 +370,42 @@ def expire_stale_pending_orders(grace_seconds: int = 900) -> int:
         save_json(ORDERS_FILE, orders)
 
     return expired
+
+# ----- Order archive (per user) -----
+
+def _arch_key(user_id: int) -> str:
+    return f"archived_by_{int(user_id)}"
+
+def is_archived_for_user(order: dict, user_id: int) -> bool:
+    return bool(order.get(_arch_key(user_id), False))
+
+def archive_order_for_user(order_id: str, user_id: int) -> tuple[bool, str]:
+    orders = load_json(ORDERS_FILE)
+    o = orders.get(order_id)
+    if not o:
+        return False, "Order not found"
+
+    if user_id not in (o.get("buyer_id"), o.get("seller_id")):
+        return False, "Not allowed"
+
+    o[_arch_key(user_id)] = True
+    o["archived_ts"] = int(time.time())
+    orders[order_id] = o
+    save_json(ORDERS_FILE, orders)
+    return True, "Archived"
+
+def unarchive_all_for_user(user_id: int) -> int:
+    orders = load_json(ORDERS_FILE)
+    key = _arch_key(user_id)
+    changed = 0
+
+    for oid, o in orders.items():
+        if user_id in (o.get("buyer_id"), o.get("seller_id")) and o.get(key):
+            o.pop(key, None)
+            orders[oid] = o
+            changed += 1
+
+    if changed:
+        save_json(ORDERS_FILE, orders)
+
+    return changed

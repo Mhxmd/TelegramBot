@@ -99,6 +99,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # easiest approach: reuse ui.on_menu by calling a small helper instead (recommended below)
 
             return await ui.on_menu(update, context)
+        
+        # ORDER ARCHIVE (per user)
+        if data.startswith("orderarchive:"):
+            _, oid = data.split(":", 1)
+            uid = update.effective_user.id
+            ok, msg = storage.archive_order_for_user(oid, uid)
+            await q.answer(msg, show_alert=not ok)
+            return await ui.on_menu(update, context)
+
+        if data == "orderunarchiveall":
+            uid = update.effective_user.id
+            n = storage.unarchive_all_for_user(uid)
+            await q.answer(f"Restored {n} order(s).", show_alert=False)
+            return await ui.on_menu(update, context)
 
         # SEARCH
         if data == "shop:search":
