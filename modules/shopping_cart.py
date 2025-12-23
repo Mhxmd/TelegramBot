@@ -257,8 +257,24 @@ async def view_cart(update, context):
 
     text += f"\n💰 *Total:* ${total:.2f}"
 
-    rows.append([InlineKeyboardButton("🧹 Clear", callback_data="cart_clear")])
+    rows.append([InlineKeyboardButton("🧹 Clear All", callback_data="cart:clear_all")])
     rows.append([InlineKeyboardButton("💳 Checkout All", callback_data="cart:checkout_all")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
     return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+#CLEAR ALL
+async def clear_all(update, context):
+    uid = update.effective_user.id
+    clear_cart(uid)
+
+    q = update.callback_query
+    return await q.edit_message_text(
+        "🧹 *Your cart has been cleared!*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛍 Shop", callback_data="menu:shop")],
+            [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
+        ])
+    )
+

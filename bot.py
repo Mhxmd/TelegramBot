@@ -195,6 +195,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("cart:remove:"):
             _, _, sku = data.split(":")
             return await shopping_cart.remove_item(update, context, sku)
+        
+        if data == "cart:clear_all":
+            return await shopping_cart.clear_all(update, context)
+
 
         if data == "cart:checkout_all":
             return await ui.cart_checkout_all(update, context)
