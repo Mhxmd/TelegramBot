@@ -260,8 +260,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("paycancel:"):
             return await ui.handle_pay_cancel(update, context, data.split(":",1)[1])
 
+    
         # SELLER
-        if data.startswith("sell:list"):
+        if data == "sell:add":
+            return await seller.start_add_listing(update, context)
+
+        if data == "sell:list":
             return await seller.show_seller_listings(update, context)
 
         if data.startswith("sell:remove_confirm"):
@@ -269,6 +273,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("sell:remove_do"):
             return await seller.do_remove_listing(update, context, data.split(":")[2])
+
+        if data == "sell:register":
+            return await seller.register_seller(update, context)
+
+        if data == "sell:cancel":
+            storage.user_flow_state.pop(update.effective_user.id, None)
+            text, kb = seller.build_seller_menu(storage.get_role(update.effective_user.id))
+            return await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
         # CHAT
         if data.startswith("contact:"):

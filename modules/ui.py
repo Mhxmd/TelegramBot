@@ -164,6 +164,8 @@ def build_main_menu(balance: float, uid: int = None):
     return kb, text
 
 
+
+
 # ==========================================
 # SHOP PAGE
 # ==========================================
@@ -179,8 +181,11 @@ def build_shop_keyboard(uid=None):
         price = it["price"]
         qty_in_cart = cart.get(sku, {}).get("qty", 0)
 
+        stock = int(it.get("stock", 0))
+        stock_label = "❌ Out of stock" if stock <= 0 else f"📦 Stock: {stock}"
+
         display_lines.append(
-            f"{it.get('emoji','🛍')} *{it['name']}* — `${price:.2f}`"
+            f"{it.get('emoji','🛍')} *{it['name']}* — `${price:.2f}`\n{stock_label}"
         )
 
         if qty_in_cart > 0:
@@ -222,24 +227,155 @@ async def on_buy(update, context, sku, qty):
     if not item:
         return await q.answer("Item not found", show_alert=True)
 
-    total = float(item["price"]) * qty
+    currency = item.get("currency", "USD")
+
+    if currency == "SOL":
+        total = float(item["price"]) * qty
+        total_label = f"{total:.4f} SOL"
+    else:
+        total = float(item["price"]) * qty
+        total_label = f"${total:.2f}"
+
+
+    kb_rows = []
+
+    if currency == "USD":
+            kb_rows.extend([
+                [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
+                [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
+                [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")]
+            ])
+
+    kb_rows.append(
+            [InlineKeyboardButton("🪙 Crypto (SOL)", callback_data=f"crypto:{sku}:{qty}")]
+        )
+
+    kb_rows.append(
+            [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")]
+        )
+
+    kb = InlineKeyboardMarkup(kb_rows)
+
+
+    await q.edit_message_text(
+                f"*{item['name']}*\n"
+                f"Qty: {qty}\n"
+                f"Total: ${total:.2f}\n\n"
+                "_Choose payment method:_",
+                reply_markup=kb,
+                parse_mode="Markdown",
+            )
+
+
+# ==========================================
+# SELLER MENU 
+# ==========================================
+def build_seller_menu(role: str):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add Listing", callback_data="sell:add")],
+        [InlineKeyboardButton("📋 My Listings", callback_data="sell:list")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+
+    text = (
+        "🛠 *Seller Panel*\n"
+        "══════════════════════\n"
+        "Manage your product listings.\n"
+        "_Add, edit, or remove items._"
+    )
+    return text, kb
+
+# ==========================================
+# SHOW SELLER LISTINGS
+# ==========================================
+async def show_seller_listings(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    listings = storage.list_seller_products(uid)
+
+    if not listings:
+        return await q.edit_message_text(
+            "📋 *My Listings*\n\n_No active listings._",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add Listing", callback_data="sell:add")],
+                [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
+            ]),
+            parse_mode="Markdown",
+        )
+
+    lines = ["📋 *My Listings*"]
+    buttons = []
+
+    for it in listings:
+        sku = it.get("sku")
+        name = it.get("name")
+        price = float(it.get("price", 0))
+        stock = int(item.get("stock", 0))
+        if stock < qty:
+             return await q.answer("❌ Not enough stock available.", show_alert=True)
+
+
+        lines.append(f"\n• *{name}* — `${price:.2f}` (Stock: {stock})")
+        buttons.append([
+            InlineKeyboardButton("❌ Remove", callback_data=f"sell:remove_confirm:{sku}")
+        ])
+
+    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+
+    await q.edit_message_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
+
+# ==========================================
+# CONFIRM REMOVE LISTING
+# ==========================================
+async def confirm_remove_listing(update, context, sku):
+    q = update.callback_query
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
-        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
-        [InlineKeyboardButton("🪙 Crypto (SOL)", callback_data=f"crypto:{sku}:{qty}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
+        [InlineKeyboardButton("✅ Yes, Remove", callback_data=f"sell:remove_do:{sku}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="sell:list")],
     ])
 
     await q.edit_message_text(
-        f"*{item['name']}*\n"
-        f"Qty: {qty}\n"
-        f"Total: ${total:.2f}\n\n"
-        "_Choose payment method:_",
+        "⚠️ *Remove Listing?*\nThis action cannot be undone.",
         reply_markup=kb,
         parse_mode="Markdown",
     )
+
+
+async def do_remove_listing(update, context, sku):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    ok = storage.remove_seller_product(uid, sku)
+
+    msg = "✅ Listing removed." if ok else "❌ Failed to remove listing."
+
+    await q.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 My Listings", callback_data="sell:list")],
+            [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+        ]),
+        parse_mode="Markdown",
+    )
+
+# ==========================================
+# ADD LISTING FLOW (UI)
+# ==========================================
+async def ask_add_listing(update, context):
+    q = update.callback_query
+    context.user_data["sell_flow"] = {"step": "name"}
+
+    await q.edit_message_text(
+        "➕ *Add Listing*\n\nSend the *product name:*",
+        parse_mode="Markdown",
+    )
+
 
 # ==========================================
 #Cart Checkout
@@ -485,6 +621,19 @@ async def on_menu(update, context):
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
         return await safe_edit(txt, kb)
+    
+    seller_status = storage.get_seller_status(uid)
+
+    if seller_status != "verified":
+        return await safe_edit(
+        "🔒 *Seller Verification Required*\n\n"
+        "Your account is not verified.\n"
+        "Please wait for admin approval.",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
+        ])
+    )
+
 
     if tab == "functions":
         return await show_functions_menu(update, context)
