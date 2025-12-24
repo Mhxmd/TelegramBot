@@ -211,6 +211,174 @@ def build_shop_keyboard(uid=None):
     )
     return txt, InlineKeyboardMarkup(rows)
 
+# ==========================================
+# BUY & CHECKOUT
+# ==========================================
+async def on_buy(update, context, sku, qty):
+    q = update.callback_query
+    item = get_any_product_by_sku(sku)
+    qty = clamp_qty(qty)
+
+    if not item:
+        return await q.answer("Item not found", show_alert=True)
+
+    total = float(item["price"]) * qty
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
+        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
+        [InlineKeyboardButton("🪙 Crypto (SOL)", callback_data=f"crypto:{sku}:{qty}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
+    ])
+
+    await q.edit_message_text(
+        f"*{item['name']}*\n"
+        f"Qty: {qty}\n"
+        f"Total: ${total:.2f}\n\n"
+        "_Choose payment method:_",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+# ==========================================
+#Cart Checkout
+# ==========================================
+
+# ==========================================
+# CART CHECKOUT (ALL ITEMS)
+# ==========================================
+async def cart_checkout_all(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    cart = shopping_cart.get_user_cart(uid)
+    if not cart:
+        return await q.answer("Your cart is empty.", show_alert=True)
+
+    total = sum(item["price"] * item["qty"] for item in cart.values())
+
+    txt = (
+        "🧾 *Cart Checkout*\n\n"
+        f"• Total: *${total:.2f}*\n\n"
+        "_Choose payment method:_"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
+        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total}")],
+        [InlineKeyboardButton("🔗 Crypto (SOL)", callback_data=f"crypto_cart:{total}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
+    ])
+
+    return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+
+
+#Crypto Checkout
+
+async def crypto_checkout(update, context, sku, qty):
+    q = update.callback_query
+    buyer_id = update.effective_user.id
+    item = get_any_product_by_sku(sku)
+    qty = clamp_qty(qty)
+
+    SOL_USD_RATE = 100.0  # PoC rate
+    total_usd = float(item["price"]) * qty
+    total_sol = total_usd / SOL_USD_RATE
+
+    buyer_wallet = wallet.ensure_user_wallet(buyer_id)
+    escrow_wallet = wallet.ensure_user_wallet(ADMIN_ID)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm Crypto Payment",
+            callback_data=f"crypto_confirm:{sku}:{qty}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
+    ])
+
+    await q.edit_message_text(
+        "🪙 *Crypto Checkout (SOL)*\n\n"
+        f"Amount: `{total_sol:.4f} SOL`\n"
+        "Funds will be held in escrow.",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+# ==========================================
+# CRYPTO CART CHECKOUT (SOL — PoC)
+# ==========================================
+async def crypto_cart_checkout(update, context, total: float):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    # Seller escrow wallet (PoC: platform wallet)
+    escrow_wallet = wallet.ensure_user_wallet(0)["public_key"]
+
+    text = (
+        "🔗 *Crypto Checkout (SOL)*\n"
+        "══════════════════════\n"
+        f"🧾 *Order Total:* `${total:.2f}`\n\n"
+        "📥 *Send SOL to Escrow Address:*\n"
+        f"`{escrow_wallet}`\n\n"
+        "⚠️ *Important*\n"
+        "• Devnet only (PoC)\n"
+        "• Funds held in escrow\n"
+        "• Admin releases on delivery\n\n"
+        "_After sending, click **I Have Paid**_"
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I Have Paid", callback_data=f"crypto_confirm:{total}")],
+        [InlineKeyboardButton(
+            "🔍 View Escrow (Devnet)",
+            url=f"https://solscan.io/account/{escrow_wallet}?cluster=devnet"
+        )],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
+    ])
+
+    return await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+
+
+
+async def crypto_confirm(update, context, sku, qty):
+    q = update.callback_query
+    buyer_id = update.effective_user.id
+    item = get_any_product_by_sku(sku)
+    qty = clamp_qty(qty)
+
+    SOL_USD_RATE = 100.0
+    total_usd = float(item["price"]) * qty
+    total_sol = total_usd / SOL_USD_RATE
+
+    buyer_wallet = wallet.ensure_user_wallet(buyer_id)
+    escrow_wallet = wallet.ensure_user_wallet(ADMIN_ID)
+
+    result = wallet.send_sol(
+        buyer_wallet["private_key"],
+        escrow_wallet["public_key"],
+        total_sol,
+    )
+
+    if isinstance(result, dict) and "error" in result:
+        return await q.edit_message_text(f"❌ Crypto failed:\n{result['error']}")
+
+    storage.add_order(
+        buyer_id,
+        item["name"],
+        qty,
+        total_usd,
+        "Crypto (SOL)",
+        int(item.get("seller_id", 0)),
+    )
+
+    await q.edit_message_text(
+        "✅ *Crypto payment successful!*\n"
+        "Funds are held in escrow.",
+        parse_mode="Markdown",
+    )
+
+
+
 
 # ==========================================
 # MENU ROUTER
@@ -235,18 +403,32 @@ async def on_menu(update, context):
 
     if tab == "wallet":
         bal = storage.get_balance(uid)
-        pub = wallet.ensure_user_wallet(uid)["public_key"]
+        wallet_data = wallet.ensure_user_wallet(uid)
+        pub = wallet_data["public_key"]
+
+        sol_bal = wallet.get_balance_both(pub)
+
+        text = (
+            "💼 **Wallet (PoC)**\n"
+            "══════════════════════\n"
+            f"💳 *Fiat Balance:* `${bal:.2f}`\n\n"
+            f"🔗 *Solana Address:*\n`{pub}`\n\n"
+            f"🧪 *Devnet SOL:* `{sol_bal['devnet']:.4f}`\n"
+            f"🧪 *Testnet SOL:* `{sol_bal['testnet']:.4f}`\n"
+            "══════════════════════\n"
+            "_Devnet/Testnet shown for proof-of-concept only._"
+        )
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Deposit", callback_data="wallet:deposit")],
-            [InlineKeyboardButton("📤 Withdraw", callback_data="wallet:withdraw")],
+            [InlineKeyboardButton("📥 Deposit (SOL)", callback_data="wallet:deposit")],
+            [InlineKeyboardButton("📤 Withdraw (SOL)", callback_data="wallet:withdraw")],
+            [InlineKeyboardButton("🔗 View on Solscan (Devnet)",
+                url=f"https://solscan.io/account/{pub}?cluster=devnet")],
             [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
         ])
 
-        return await safe_edit(
-            f"💼 **Wallet**\n• Balance: `${bal:.2f}`\n• Solana: `{pub}`",
-            kb,
-        )
+        return await safe_edit(text, kb)
+
 
     if tab == "messages":
         threads = storage.load_json(storage.MESSAGES_FILE)

@@ -162,6 +162,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, sku, qty = data.split(":")
             return await ui.show_nets_qr(update, context, sku, int(qty))
 
+        # ==========================
+        # CRYPTO PAYMENTS (SOL)
+        # ==========================
+
+        if data.startswith("crypto:"):
+            _, sku, qty = data.split(":")
+            return await ui.crypto_checkout(update, context, sku, int(qty))
+
+        if data.startswith("crypto_confirm:"):
+            _, sku, qty = data.split(":")
+            return await ui.crypto_confirm(update, context, sku, int(qty))
+
+
         # Crypto Functions
         if data == "wallet:deposit":
             return await wallet.show_deposit_info(update, context)
@@ -202,6 +215,27 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data == "cart:checkout_all":
             return await ui.cart_checkout_all(update, context)
+
+        # CRYPTO CART CHECKOUT
+        if data.startswith("crypto_cart:"):
+            _, total = data.split(":")
+            return await ui.crypto_cart_checkout(update, context, float(total))
+
+        #Crypto Payment Confirmation - Cart
+        if data.startswith("crypto_confirm:"):
+            _, total = data.split(":")
+            uid = update.effective_user.id
+
+            shopping_cart.clear_cart(uid)
+
+            return await q.edit_message_text(
+                "✅ *Crypto payment marked as sent!*\n\n"
+                "🔒 Funds are now in escrow.\n"
+                "📦 Seller will be notified.\n"
+                "🛡 Admin releases funds after confirmation.",
+                parse_mode="Markdown",
+            )
+
 
         if data.startswith("stripe_cart:"):
             _, total = data.split(":")
@@ -304,13 +338,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
 
-    # SEARCH MODE
-    if context.user_data.get("awaiting_search"):
-      mode = context.user_data.pop("awaiting_search")
+    mode = context.user_data.get("awaiting_search")
 
     if mode == "users":
+        context.user_data["awaiting_search"] = None
         results = storage.search_users(text)
         return await ui.show_user_search_results(update, context, results)
+
+    if mode == "products":
+        context.user_data["awaiting_search"] = None
+        results = ui.search_products_by_name(text)
+        return await ui.show_search_results(update, context, results)
 
     mode = context.user_data.get("awaiting_search")
 

@@ -78,20 +78,22 @@ def get_balance_devnet(pubkey: str) -> float:
 
 def get_balance_both(pubkey: str):
     out = {"devnet": 0.0, "mainnet": 0.0}
+    pk = Pubkey.from_string(pubkey)
 
     try:
-        r = solana_devnet.get_balance(Pubkey.from_string(pubkey))
-        out["devnet"] = r["result"]["value"] / 1e9
+        r = solana_devnet.get_balance(pk)
+        out["devnet"] = r.value / 1e9
     except Exception as e:
         logger.error(f"Devnet balance error: {e}")
 
     try:
-        r = solana_mainnet.get_balance(Pubkey.from_string(pubkey))
-        out["mainnet"] = r["result"]["value"] / 1e9
+        r = solana_mainnet.get_balance(pk)
+        out["mainnet"] = r.value / 1e9
     except Exception as e:
         logger.error(f"Mainnet balance error: {e}")
 
     return out
+
 
 # ============================================================
 # Deposit UI
