@@ -122,7 +122,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await ui.ask_search(update, context)
         
         if data == "search:users":
-         return await ui.ask_user_search(update, context)
+            return await ui.ask_user_search(update, context)
 
         # BUY FLOW
         if data.startswith("buy:"):
@@ -169,11 +169,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("crypto:"):
             _, sku, qty = data.split(":")
             return await ui.crypto_checkout(update, context, sku, int(qty))
-
-        if data.startswith("crypto_confirm:"):
-            _, sku, qty = data.split(":")
-            return await ui.crypto_confirm(update, context, sku, int(qty))
-
 
         # Crypto Functions
         if data == "wallet:deposit":
@@ -223,9 +218,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         #Crypto Payment Confirmation - Cart
         if data.startswith("crypto_confirm:"):
-            _, total = data.split(":")
-            uid = update.effective_user.id
-
+            _, sku, qty = data.split(":")
+            return await ui.crypto_confirm(update, context, sku, int(qty))
+        if data == "crypto_cart_confirm":
+            q = update.callback_query
             shopping_cart.clear_cart(uid)
 
             return await q.edit_message_text(
@@ -282,6 +278,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text, kb = seller.build_seller_menu(storage.get_role(update.effective_user.id))
             return await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
+        elif data == "seller:apply":
+            uid = update.effective_user.id
+            seller.apply_for_seller(uid)
+            return await ui.on_menu(update, context)
+
+
+        elif data.startswith("captcha:"):
+            uid = update.effective_user.id
+            answer = data.split(":")[1]
+            ok = seller.verify_captcha(uid, answer)
+            if ok:
+                return await ui.on_menu(update, context)
+            else:
+                return await q.answer("❌ Wrong answer", show_alert=True)
+
+
         # CHAT
         if data.startswith("contact:"):
             _, sku, sid = data.split(":")
@@ -332,52 +344,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = msg.from_user.id
     text = (msg.text or "").strip()
+    
     storage.ensure_user_exists(uid, update.effective_user.username)
 
+    # 1. Captcha Verification
+    state = storage.user_flow_state.get(uid, {})
+    if state.get("phase") == "captcha":
+        if seller.verify_captcha(uid, text):
+            await update.message.reply_text("✅ Verified! You may now sell.")
+        else:
+            await update.message.reply_text("❌ Wrong answer. Try again.")
+        return
 
-    # CHAT systems
+    # 2. Active Chat Systems
     if chat.is_in_public_chat(uid):
         return await chat.handle_public_message(update, context, text)
 
     if chat.is_in_private_thread(uid):
         return await chat.handle_private_message(update, context, text)
 
-    # SELLER
+    # 3. Seller Listing Flow
     if seller.is_in_seller_flow(uid):
         return await seller.handle_seller_flow(update, context, text)
 
-    # WALLET WITHDRAWAL
+    # 4. Wallet Withdrawal Flow
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
 
-    mode = context.user_data.get("awaiting_search")
+    # 5. Controlled Search Logic
+    search_mode = context.user_data.get("awaiting_search")
 
-    if mode == "users":
+    if search_mode == "users":
         context.user_data["awaiting_search"] = None
         results = storage.search_users(text)
         return await ui.show_user_search_results(update, context, results)
 
-    if mode == "products":
+    elif search_mode == "products":
         context.user_data["awaiting_search"] = None
         results = ui.search_products_by_name(text)
         return await ui.show_search_results(update, context, results)
 
-    mode = context.user_data.get("awaiting_search")
-
-    if mode == "products":
-        context.user_data["awaiting_search"] = None
-        results = ui.search_products_by_name(text)
-        return await ui.show_search_results(update, context, results)
-
-    if mode == "users":
-        context.user_data["awaiting_search"] = None
-        results = storage.search_users(text)   # YOU MUST HAVE THIS
-        return await ui.show_user_search_results(update, context, results)
-
-
+    # 6. Default Fallback 
+    # Only perform search if you want the bot to ALWAYS search when a user types.
+    # Otherwise, comment the next 2 lines out to prevent "Home" issues.
     results = ui.search_products_by_name(text)
-    return await ui.show_search_results(update, context, results)
-
+    if results:
+        return await ui.show_search_results(update, context, results)
     
 
 

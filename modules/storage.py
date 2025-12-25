@@ -165,6 +165,22 @@ def set_role(user_id: int, role: str):
     roles[str(user_id)] = role
     save_json(ROLES_FILE, roles)
 
+def set_seller_status(user_id: int, status: str):
+    users = load_json(USERS_FILE)
+    u = users.setdefault(str(user_id), {})
+    u["seller_status"] = status
+    save_json(USERS_FILE, users)
+
+
+def get_seller_status(user_id: int) -> str:
+    if user_id == ADMIN_ID:
+        return "verified"
+
+    users = load_json(USERS_FILE)
+    return users.get(str(user_id), {}).get("seller_status", "pending")
+
+
+
 # =========================================================
 # USERS
 # =========================================================

@@ -33,6 +33,50 @@ def build_seller_menu(role: str):
 
     return text, kb
 
+# Seller Application Status Menu
+
+def apply_for_seller(user_id: int):
+    storage.set_role(user_id, "seller")
+    storage.set_seller_status(user_id, "pending_captcha")
+
+import random
+
+def generate_captcha():
+    """
+    Simple human-verification captcha.
+    Returns: (question: str, answer: str)
+    """
+    a = random.randint(1, 9)
+    b = random.randint(1, 9)
+    op = random.choice(["+", "-"])
+
+    if op == "+":
+        answer = a + b
+    else:
+        # avoid negatives
+        if b > a:
+            a, b = b, a
+        answer = a - b
+
+    question = f"What is {a} {op} {b}?"
+
+    return question, str(answer)
+
+
+#Captca handling function
+
+def verify_captcha(user_id: int, answer: int):
+    st = storage.user_flow_state.get(user_id)
+    if not st or st.get("phase") != "captcha":
+        return False
+
+    if int(answer) == st["answer"]:
+        storage.set_seller_status(user_id, "human_verified")
+        storage.user_flow_state.pop(user_id, None)
+        return True
+
+    return False
+
 
 # ==========================
 # SELLER LISTINGS
@@ -194,6 +238,10 @@ async def register_seller(update, context):
     user_id = update.effective_user.id
 
     storage.set_role(user_id, "seller")
+    storage.set_seller_status(user_id, "pending")
+    storage.set_role(user_id, "seller")
+    
+
     text, kb = build_seller_menu("seller")
 
     await q.edit_message_text(
