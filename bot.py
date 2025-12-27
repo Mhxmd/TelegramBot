@@ -41,8 +41,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wallet.ensure_user_wallet(user_id)
 
     balance = storage.get_balance(user_id)
-    
-    #UPDATED: pass user_id into build_main_menu()
     kb, text = ui.build_main_menu(balance, user_id)
 
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
@@ -64,6 +62,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
     data = (q.data or "").strip()
+    # Define user_id so it's available for all logic below
+    user_id = update.effective_user.id
 
     try:
         await q.answer()
@@ -74,7 +74,25 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # MENUS
         if data.startswith("menu:"):
             return await ui.on_menu(update, context)
+        # Shop Page
+        if data.startswith("shop_page:"):
+            page = int(data.split(":")[1])
+            txt, kb = ui.build_shop_keyboard(uid=user_id, page=page)
+            await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
         
+        # VIEW ITEM DETAILS (Image & Stock)
+        if data.startswith("view_item:"):
+            sku = data.split(":")[1]
+            return await ui.view_item_details(update, context, sku)
+
+        # SELLER TOGGLE HIDE/UNHIDE
+        if data.startswith("sell:toggle_hide:"):
+            sku = data.split(":")[2]
+            # Flip the hidden status in storage
+            storage.toggle_product_visibility(sku) 
+            # Refresh the seller's listing view
+            return await seller.show_seller_listings(update, context)
+
         # ORDER CANCEL (pending)
         if data.startswith("ordercancel:"):
             _, oid = data.split(":", 1)
@@ -122,7 +140,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await ui.ask_search(update, context)
         
         if data == "search:users":
-            return await ui.ask_user_search(update, context)
+         return await ui.ask_user_search(update, context)
 
         # BUY FLOW
         if data.startswith("buy:"):
@@ -162,14 +180,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, sku, qty = data.split(":")
             return await ui.show_nets_qr(update, context, sku, int(qty))
 
-        # ==========================
-        # CRYPTO PAYMENTS (SOL)
-        # ==========================
-
-        if data.startswith("crypto:"):
-            _, sku, qty = data.split(":")
-            return await ui.crypto_checkout(update, context, sku, int(qty))
-
         # Crypto Functions
         if data == "wallet:deposit":
             return await wallet.show_deposit_info(update, context)
@@ -203,35 +213,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("cart:remove:"):
             _, _, sku = data.split(":")
             return await shopping_cart.remove_item(update, context, sku)
-        
-        if data == "cart:clear_all":
-            return await shopping_cart.clear_all(update, context)
-
 
         if data == "cart:checkout_all":
             return await ui.cart_checkout_all(update, context)
-
-        # CRYPTO CART CHECKOUT
-        if data.startswith("crypto_cart:"):
-            _, total = data.split(":")
-            return await ui.crypto_cart_checkout(update, context, float(total))
-
-        #Crypto Payment Confirmation - Cart
-        if data.startswith("crypto_confirm:"):
-            _, sku, qty = data.split(":")
-            return await ui.crypto_confirm(update, context, sku, int(qty))
-        if data == "crypto_cart_confirm":
-            q = update.callback_query
-            shopping_cart.clear_cart(uid)
-
-            return await q.edit_message_text(
-                "✅ *Crypto payment marked as sent!*\n\n"
-                "🔒 Funds are now in escrow.\n"
-                "📦 Seller will be notified.\n"
-                "🛡 Admin releases funds after confirmation.",
-                parse_mode="Markdown",
-            )
-
 
         if data.startswith("stripe_cart:"):
             _, total = data.split(":")
@@ -256,12 +240,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("paycancel:"):
             return await ui.handle_pay_cancel(update, context, data.split(":",1)[1])
 
-    
         # SELLER
-        if data == "sell:add":
-            return await seller.start_add_listing(update, context)
-
-        if data == "sell:list":
+        if data.startswith("sell:list"):
             return await seller.show_seller_listings(update, context)
 
         if data.startswith("sell:remove_confirm"):
@@ -270,21 +250,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("sell:remove_do"):
             return await seller.do_remove_listing(update, context, data.split(":")[2])
 
+        if data == "sell:add":
+            return await seller.start_add_listing(update, context)
+
         if data == "sell:register":
             return await seller.register_seller(update, context)
 
-        if data == "sell:cancel":
-            storage.user_flow_state.pop(update.effective_user.id, None)
-            text, kb = seller.build_seller_menu(storage.get_role(update.effective_user.id))
-            return await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-
-        elif data == "seller:apply":
-            uid = update.effective_user.id
-            seller.apply_for_seller(uid)
-            return await ui.on_menu(update, context)
-
-
-        elif data.startswith("captcha:"):
+        if data.startswith("captcha:"):
             uid = update.effective_user.id
             answer = data.split(":")[1]
             ok = seller.verify_captcha(uid, answer)
@@ -293,7 +265,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 return await q.answer("❌ Wrong answer", show_alert=True)
 
-
         # CHAT
         if data.startswith("contact:"):
             _, sku, sid = data.split(":")
@@ -301,6 +272,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("chat:open:"):
             return await chat.on_chat_open(update, context, data.split(":")[1])
+
+        if data.startswith("chat:delete:"):
+            thread_id = data.split(":")[2]
+            return await chat.on_chat_delete(update, context, thread_id)
 
         if data == "chat:exit":
             return await chat.on_chat_exit(update, context)
@@ -344,53 +319,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = msg.from_user.id
     text = (msg.text or "").strip()
-    
     storage.ensure_user_exists(uid, update.effective_user.username)
 
-    # 1. Captcha Verification
-    state = storage.user_flow_state.get(uid, {})
-    if state.get("phase") == "captcha":
-        if seller.verify_captcha(uid, text):
-            await update.message.reply_text("✅ Verified! You may now sell.")
-        else:
-            await update.message.reply_text("❌ Wrong answer. Try again.")
+    # 1. HANDLE PHOTO UPLOADS (For Seller Image Flow)
+    if msg.photo:
+        st = storage.user_flow_state.get(uid)
+        if st and st.get("phase") == "add_image":
+            file_id = msg.photo[-1].file_id
+            return await seller.finalize_listing(update, context, image_url=file_id)
+
+    # 2. HANDLE TEXT
+    if not text: 
         return
 
-    # 2. Active Chat Systems
+    # 3. SEARCH MODE (Moved up to catch input during active search)
+    search_mode = context.user_data.get("awaiting_search")
+    if search_mode:
+        context.user_data["awaiting_search"] = None # Reset state immediately
+        
+        if search_mode == "users":
+            # Pass all products to help find sellers not yet in the user DB
+            all_prods = ui.enumerate_all_products() 
+            results = storage.search_users(text, all_prods)
+            return await ui.show_user_search_results(update, context, results)
+            
+        elif search_mode == "products":
+            results = ui.search_products_by_name(text)
+            return await ui.show_search_results(update, context, results)
+
+    # 4. CHAT SYSTEMS
     if chat.is_in_public_chat(uid):
         return await chat.handle_public_message(update, context, text)
 
     if chat.is_in_private_thread(uid):
         return await chat.handle_private_message(update, context, text)
 
-    # 3. Seller Listing Flow
+    # 5. SELLER FLOW
     if seller.is_in_seller_flow(uid):
         return await seller.handle_seller_flow(update, context, text)
 
-    # 4. Wallet Withdrawal Flow
+    # 6. WALLET WITHDRAWAL
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
-
-    # 5. Controlled Search Logic
-    search_mode = context.user_data.get("awaiting_search")
-
-    if search_mode == "users":
-        context.user_data["awaiting_search"] = None
-        results = storage.search_users(text)
-        return await ui.show_user_search_results(update, context, results)
-
-    elif search_mode == "products":
-        context.user_data["awaiting_search"] = None
-        results = ui.search_products_by_name(text)
-        return await ui.show_search_results(update, context, results)
-
-    # 6. Default Fallback 
-    # Only perform search if you want the bot to ALWAYS search when a user types.
-    # Otherwise, comment the next 2 lines out to prevent "Home" issues.
-    results = ui.search_products_by_name(text)
-    if results:
-        return await ui.show_search_results(update, context, results)
-    
 
 
 # ==========================

@@ -133,6 +133,11 @@ async def on_chat_open(update: Update, context: ContextTypes.DEFAULT_TYPE, threa
     q = update.callback_query
     uid = update.effective_user.id
     thr = storage.get_thread(thread_id)
+    if thr and "hidden_from" in thr and uid in thr["hidden_from"]:
+        thr["hidden_from"].remove(uid)
+        threads = storage.load_json(storage.MESSAGES_FILE)
+        threads[thread_id] = thr
+        storage.save_json(storage.MESSAGES_FILE, threads)
     if not thr:
         await q.edit_message_text("❌ Chat no longer exists. Start again with 'Contact Seller'.")
         return
@@ -282,3 +287,29 @@ async def handle_public_message(update: Update, context: ContextTypes.DEFAULT_TY
             )
         except Exception:
             pass
+
+# ----------------- Message Deletion (Hiding) -----------------
+async def on_chat_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id: str):
+    q = update.callback_query
+    uid = update.effective_user.id
+    
+    # 1. Load and update storage
+    threads = storage.load_json(storage.MESSAGES_FILE)
+    if thread_id in threads:
+        if "hidden_from" not in threads[thread_id]:
+            threads[thread_id]["hidden_from"] = []
+        
+        if uid not in threads[thread_id]["hidden_from"]:
+            threads[thread_id]["hidden_from"].append(uid)
+            storage.save_json(storage.MESSAGES_FILE, threads)
+            await q.answer("🗑 Chat removed from your list.")
+    else:
+        await q.answer("❌ Chat not found.")
+
+    # 2. Refresh the UI
+    # We import inside the function to avoid circular import issues
+    from modules.ui import on_menu
+    
+    # FIX: instead of q.data = "...", we pass the tab as an argument
+    # Note: This requires you to update the on_menu signature in ui.py (see below)
+    return await on_menu(update, context, force_tab="messages")

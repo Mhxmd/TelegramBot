@@ -154,6 +154,58 @@ def get_all_disputed_orders() -> Dict[str, dict]:
 
     return disputes
 
+def update_order_status(order_id, new_status, reason=None):
+    orders = load_json(ORDERS_FILE)
+    if order_id in orders:
+        orders[order_id]["status"] = new_status
+        if reason:
+            orders[order_id]["dispute_reason"] = reason
+        save_json(ORDERS_FILE, orders)
+        return True
+    return False
+
+# =========================================================
+# Product Visibility
+# =========================================================
+
+def toggle_product_visibility(sku: str):
+    data = load_json(SELLER_PRODUCTS_FILE)
+    for uid, items in data.items():
+        for item in items:
+            if item.get("sku") == sku:
+                # Flip the boolean
+                item["hidden"] = not item.get("hidden", False)
+                save_json(SELLER_PRODUCTS_FILE, data)
+                return True
+    return False
+
+# =========================================================
+# Search for users in marketplace
+# =========================================================
+
+# modules/storage.py
+
+def search_users(query: str, all_products: list):
+    query = query.lower().strip()
+    found_users = {}
+
+    # 1. Load primary user database
+    data = load_json(USERS_FILE) 
+    
+    if isinstance(data, dict):
+        for uid, udata in data.items():
+            if query == str(uid) or query in udata.get("username", "").lower():
+                found_users[str(uid)] = {"user_id": uid, "username": udata.get("username", "unknown")}
+
+    # 2. Use the passed products list to find sellers
+    # This avoids the NameError and fixes the search failure in your images
+    for it in all_products:
+        sid = str(it.get("seller_id", ""))
+        if query == sid:
+            if sid not in found_users:
+                found_users[sid] = {"user_id": sid, "username": "Marketplace Seller"}
+
+    return list(found_users.values())
 # =========================================================
 # ROLES
 # =========================================================
@@ -202,21 +254,28 @@ def ensure_user_exists(user_id: int, username: str):
 
     save_json(USERS_FILE, users)
 
-def search_users(query: str) -> List[Dict]:
-    q = query.lower().strip()
-    users = load_json(USERS_FILE)
-    results: List[Dict] = []
+def search_users(query: str, all_products: list):
+    query = query.lower().strip()
+    found_users = {}
 
-    for uid, u in users.items():
-        uname = (u.get("username") or "").lower()
-        if q in uid or (uname and q in uname):
-            results.append({
-                "user_id": int(uid),
-                "username": u.get("username", "unknown"),
-                "role": u.get("role", "buyer"),
-            })
+    # 1. Load your primary user database
+    # (Using 'load_json' directly as we are inside storage.py)
+    data = load_json(USERS_FILE) 
+    
+    if isinstance(data, dict):
+        for uid, udata in data.items():
+            if query == str(uid) or query in udata.get("username", "").lower():
+                found_users[str(uid)] = {"user_id": uid, "username": udata.get("username", "unknown")}
 
-    return results
+    # 2. Use the passed products list to find sellers
+    # This fixes the search failure for IDs like 1576365386
+    for it in all_products:
+        sid = str(it.get("seller_id", ""))
+        if query == sid:
+            if sid not in found_users:
+                found_users[sid] = {"user_id": sid, "username": "Marketplace Seller"}
+
+    return list(found_users.values())
 
 # =========================================================
 # SELLER PRODUCTS
