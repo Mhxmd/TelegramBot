@@ -193,6 +193,13 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
         return False, "Order not found"
 
     sku = o.get("sku")
+    
+    # NEW SAFETY CHECK:
+    # If there's no SKU, or it's a Cart purchase, skip inventory logic
+    if not sku or str(sku).startswith("cart_"):
+        _patch_order(order_id, {"inv_reason": "skipped_no_sku"})
+        return True, "ok"
+
     qty = int(o.get("inv_qty", 1))
     base, var = split_sku_variant(sku)
 
@@ -224,7 +231,11 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
 # Variations
 # -------------------------
 
-def split_sku_variant(sku: str):
+def split_sku_variant(sku: Any):
+    # Safety Check: If sku is None or not a string, return immediately
+    if not sku or not isinstance(sku, str):
+        return None, None
+        
     if "|" in sku:
         base, var = sku.split("|", 1)
         return base.strip(), var.strip()

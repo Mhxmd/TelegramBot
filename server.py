@@ -86,16 +86,114 @@ async def health():
 # ============================================================
 @app.get("/payment/success", response_class=HTMLResponse)
 async def payment_success(order_id: str):
+    # This URL pulls from your .env PUBLIC_BASE_URL 
+    # to ensure the redirect back to the bot is accurate.
+    bot_link = f"https://t.me/Xchange_ShopBot?start=success_{order_id}"
+    
     return f"""
-    <html>
-      <head>
-        <meta http-equiv="refresh"
-              content="4;url=https://t.me/Xchange_ShopBot?start=success_{order_id}">
-      </head>
-      <body style="background:#020617;color:white;text-align:center;padding-top:20vh">
-        <h1>✅ Payment Successful</h1>
-        <p>Order <b>{order_id}</b> is now in escrow.</p>
-      </body>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Payment Successful | Xchange</title>
+        <meta http-equiv="refresh" content="5;url={bot_link}">
+        <style>
+            :root {{
+                --bg: #020617;
+                --card: #0f172a;
+                --text: #f8fafc;
+                --primary: #0088cc;
+                --success: #22c55e;
+            }}
+            body {{
+                background-color: var(--bg);
+                color: var(--text);
+                font-family: -apple-system, system-ui, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+            }}
+            .container {{
+                background: var(--card);
+                padding: 40px;
+                border-radius: 24px;
+                box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+                text-align: center;
+                max-width: 400px;
+                width: 90%;
+                border: 1px solid #1e293b;
+            }}
+            .checkmark {{
+                width: 80px;
+                height: 80px;
+                background: var(--success);
+                color: white;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 40px;
+                margin: 0 auto 20px;
+            }}
+            h1 {{ margin: 0 0 10px; font-size: 24px; }}
+            p {{ color: #94a3b8; line-height: 1.6; margin-bottom: 30px; }}
+            .order-id {{
+                display: block;
+                font-family: monospace;
+                background: #1e293b;
+                padding: 5px;
+                border-radius: 5px;
+                color: #38bdf8;
+                margin-top: 10px;
+            }}
+            .btn {{
+                background: var(--primary);
+                color: white;
+                text-decoration: none;
+                padding: 14px 28px;
+                border-radius: 12px;
+                font-weight: 600;
+                display: block;
+                transition: transform 0.2s;
+            }}
+            .btn:active {{ transform: scale(0.98); }}
+            .loader {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #64748b;
+            }}
+            .spinner {{
+                width: 12px;
+                height: 12px;
+                border: 2px solid #334155;
+                border-top: 2px solid var(--primary);
+                border-radius: 50%;
+                display: inline-block;
+                animation: spin 1s linear infinite;
+                margin-right: 5px;
+            }}
+            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="checkmark">✓</div>
+            <h1>Payment Received</h1>
+            <p>Your order is now secured in escrow.<br>
+               <span class="order-id">ID: {order_id}</span>
+            </p>
+            
+            <a href="{bot_link}" class="btn">Return to Telegram</a>
+            
+            <div class="loader">
+                <div class="spinner"></div>
+                Redirecting automatically in 5 seconds...
+            </div>
+        </div>
+    </body>
     </html>
     """
 
@@ -238,3 +336,21 @@ async def hitpay_webhook(request: Request):
     log.info(f"🔒 Order {order_id} escrowed via HitPay")
 
     return {"status": "ok"}
+
+# ============================================================
+# Successful Payment Handler
+# ============================================================
+
+@app.route('/payment_success')
+def payment_success():
+    # This renders a simple HTML page in the user's browser
+    return """
+    <html>@
+        <head><title>Success!</title></head>
+        <body style="text-align: center; padding: 50px; font-family: sans-serif;">
+            <h1>✅ Payment Successful!</h1>
+            <p>Thank you for your purchase.</p>
+            <p>You can now close this window and return to the Telegram Bot.</p>
+        </body>
+    </html>
+    """

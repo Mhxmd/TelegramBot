@@ -190,6 +190,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "wallet:confirm_withdraw":
             return await wallet.confirm_withdraw(update, context)
 
+        # Order Dispute
+        if data.startswith("order_dispute_init:"):
+            oid = data.split(":")[1]
+            return await ui.file_order_dispute(update, context, oid)
+
         # ==========================
         # CART SYSTEM
         # ==========================
