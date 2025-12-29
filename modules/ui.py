@@ -413,6 +413,25 @@ async def on_buy(update, context, sku, qty):
 # ==========================================
 # QUANTITY CHANGE SCREEN
 # ==========================================
+def clamp_qty(qty, min_qty: int = 1, max_qty: int = 99) -> int:
+    """
+    Normalizes qty into a safe integer range.
+    Accepts int/float/str like "3", "3.0", etc.
+    """
+    try:
+        q = int(qty)
+    except Exception:
+        try:
+            q = int(float(str(qty).strip()))
+        except Exception:
+            q = min_qty
+
+    if q < min_qty:
+        return min_qty
+    if q > max_qty:
+        return max_qty
+    return q
+
 async def on_qty(update, context, sku, qty):
     q = update.callback_query
     item = get_any_product_by_sku(sku)
