@@ -197,29 +197,26 @@ def build_shop_keyboard(uid=None, page=0):
     display_lines = []
 
     for it in current_items:
-        sku = it["sku"]
-        price = it["price"]
-        stock = it.get("stock", 0)
-        sid = it.get("seller_id", 0)
-        
-        seller_label = "System" if sid == 0 else f"User {sid}"
-        stock_text = f"{stock} left" if stock > 0 else "🛑 *SOLD OUT*"
-        
-        # TREE FORMAT:
-        # Using ├ for the seller and └ for the "Action" line to point at buttons
-        display_lines.append(
-            f"{it.get('emoji','📦')} **{it['name']}** — `${price:.2f}`\n"
-            f"├ 👤 Seller: `{seller_label}`\n"
-            f"└ 📦 Stock: {stock_text}"
-        )
+            sku = it["sku"]
+            price = it["price"]
+            stock = it.get("stock", 0)
+            sid = it.get("seller_id", 0)
+            
+            seller_label = "System" if sid == 0 else f"User {sid}"
+            stock_text = f"{stock} left" if stock > 0 else "🛑 *SOLD OUT*"
+            
+            display_lines.append(
+                f"{it.get('emoji','📦')} **{it['name']}** — `${price:.2f}`\n"
+                f"├ 👤 Seller: `{seller_label}`\n"
+                f"└ 📦 Stock: {stock_text}"
+            )
 
-        # SIDE-BY-SIDE BUTTONS:
-        # Left button shows the name, Right button shows the action + price
-        # We use .ljust() or short strings to keep them from stacking
-        rows.append([
-            InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}"),
-            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
-        ])
+            # NEW: Added '⚡ Buy Now' which triggers the pay_native handler in bot.py
+            rows.append([
+                InlineKeyboardButton(f"🔎 View", callback_data=f"view_item:{sku}"),
+                InlineKeyboardButton(f"🛒 +Cart", callback_data=f"cart:add:{sku}"),
+                InlineKeyboardButton(f"⚡ Buy Now", callback_data=f"pay_native:smart_glocal:{price:.2f}:{sku}")
+            ])
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
@@ -306,11 +303,17 @@ async def cart_checkout_all(update, context):
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
-        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
-    ])
+            # --- Native Telegram Payments ---
+            [InlineKeyboardButton("💳 Smart Glocal (Native)", callback_data=f"pay_native:smart_glocal:{total:.2f}")],
+            [InlineKeyboardButton("🇸🇬 Redsys (Native)", callback_data=f"pay_native:redsys:{total:.2f}")],
+            
+            # --- Your Existing External Methods ---
+            [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total:.2f}")],
+            [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")],
+            [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total:.2f}")],
+            
+            [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
+        ])
 
     return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
 

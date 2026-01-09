@@ -6,10 +6,10 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, LabeledPrice # Added LabeledPrice
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+    MessageHandler, ContextTypes, filters , PreCheckoutQueryHandler
 )
 
 # Load .env
@@ -54,6 +54,91 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt, kb = ui.build_shop_keyboard(uid)
     await update.message.reply_text(txt, reply_markup=kb, parse_mode="Markdown")
 
+# ==========================
+# NATIVE PAYMENT HANDLERS
+# ==========================
+
+async def handle_native_payment(update, context):
+    query = update.callback_query
+    data = query.data.split(":")
+    
+    # pay_native : provider : amount : (optional sku)
+    provider = data[1]
+    amount_str = data[2]
+    sku = data[3] if len(data) > 3 else "Multiple Items (Cart)"
+    
+    amount_in_cents = int(float(amount_str) * 100)
+    token = PROVIDER_TOKEN_SMART_GLOCAL if provider == "smart_glocal" else PROVIDER_TOKEN_REDSYS
+    
+    await context.bot.send_invoice(
+        chat_id=update.effective_user.id,
+        title=f"Purchase: {sku}",
+        description=f"Direct payment via {provider.title()}",
+        payload=f"PAY-{sku}-{update.effective_user.id}",
+        provider_token=token,
+        currency="USD",
+        prices=[LabeledPrice("Price", amount_in_cents)],
+        start_parameter="market-purchase"
+    )
+    await query.answer()
+
+async def handle_native_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unified handler for both Single Item and Cart checkouts using .env tokens"""
+    query = update.callback_query
+    data = query.data.split(":")
+    
+    # Format expected: pay_native:provider:amount:optional_sku
+    provider = data[1]
+    amount_str = data[2]
+    sku = data[3] if len(data) > 3 else "Cart Checkout"
+    
+    # Pull tokens from Environment
+    if provider == "smart_glocal":
+        token = os.getenv("PROVIDER_TOKEN_SMART_GLOCAL")
+    else:
+        token = os.getenv("PROVIDER_TOKEN_REDSYS")
+
+    if not token:
+        logger.error(f"Missing provider token for: {provider}")
+        return await query.answer("❌ Payment system offline (Token missing).", show_alert=True)
+
+    try:
+        price_in_cents = int(float(amount_str) * 100)
+        
+        await context.bot.send_invoice(
+            chat_id=update.effective_user.id,
+            title=f"Order: {sku}",
+            description=f"Payment via {provider.replace('_', ' ').title()}",
+            payload=f"PAY|{uid}|{sku}",
+            provider_token=token,
+            currency="USD",
+            prices=[LabeledPrice("Total", price_in_cents)],
+            start_parameter="market-checkout"
+        )
+        await query.answer()
+    except Exception as e:
+        logger.error(f"Invoice Generation Error: {e}")
+        await query.answer("❌ Failed to create invoice. Try again later.", show_alert=True)
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Final check before the user enters their card details"""
+    query = update.pre_checkout_query
+    # Check if we have stock one last time here if you want
+    if query.invoice_payload != "marketplace-cart-checkout":
+        await query.answer(ok=False, error_message="Something went wrong...")
+    else:
+        await query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Triggered after the money is actually processed"""
+    uid = update.effective_user.id
+    # Clear the user's cart now that they paid
+    shopping_cart.clear_cart(uid)
+    
+    await update.message.reply_text(
+        "✅ **Payment Successful!**\nThank you for your purchase. Your order is now being processed.",
+        parse_mode="Markdown"
+    )
 
 # ==========================
 # CALLBACK ROUTER
@@ -174,6 +259,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, total = data.split(":")
             return await ui.create_hitpay_cart_checkout(update, context, float(total))
 
+        # Add this inside the "try" block of your callback_router
+        if data.startswith("pay_native:"):
+            return await handle_native_checkout(update, context)
+                
         # PAYMENTS SINGLE ITEM NETS
 
         if data.startswith("nets:"):
@@ -381,14 +470,23 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Mandatory Payment Logic Handlers (Pre-checkout and Success)
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+    # Standard Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop_cmd))
+    
+    # The Router handles all menu clicks (including pay_native)
     app.add_handler(CallbackQueryHandler(callback_router))
+    
+    # General Message Handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_message))
 
-    print("🤖 Bot running... Ctrl+C to stop")
+    print("🤖 Bot running... Tokens loaded from .env")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()

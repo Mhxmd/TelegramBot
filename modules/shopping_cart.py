@@ -175,6 +175,9 @@ async def show_add_to_cart_feedback(update, context, sku):
 # ======================================
 # VIEW CART (CLEAN NEW UI)
 # ======================================
+# ======================================
+# VIEW CART (NATIVE PAYMENTS UPDATE)
+# ======================================
 async def view_cart(update, context):
     q = update.callback_query
     uid = update.effective_user.id
@@ -213,8 +216,19 @@ async def view_cart(update, context):
 
     text_lines.append(f"\n💰 *Total:* `${total:.2f}`")
 
+    # ==========================================
+    # TELEGRAM NATIVE PAYMENT OPTIONS
+    # ==========================================
+    # These callback_data strings must be handled in your bot's main handler 
+    # to call context.bot.send_invoice()
+    
+    rows.append([InlineKeyboardButton("💳 Pay via Smart Glocal", callback_data=f"pay_native:smart_glocal:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🇸🇬 Pay via Redsys", callback_data=f"pay_native:redsys:{total:.2f}")])
+    
+    # Optional: Keep your external checkout menu if needed
+    # rows.append([InlineKeyboardButton("🌐 Other Payment Methods", callback_data=f"cart_checkout_menu:{total:.2f}")])
+
     rows.append([InlineKeyboardButton("🧹 Clear All", callback_data="cart:clear_all")])
-    rows.append([InlineKeyboardButton("💳 Checkout All", callback_data="cart:checkout_all")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
     return await q.edit_message_text(
