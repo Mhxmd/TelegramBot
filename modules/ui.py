@@ -41,15 +41,7 @@ CATALOG = {
         "is_static": True,
         "stock": 999
     },
-    "blackcap": {
-        "name": "Black Cap", 
-        "price": 12, 
-        "emoji": "🧢", 
-        "seller_id": 0, 
-        "desc": "Matte black cap.",
-        "is_static": True,
-        "stock": 999
-    },
+
 }
 
 # ==========================================
@@ -77,9 +69,6 @@ def get_any_product_by_sku(sku: str):
             if it.get("sku") == sku:
                 return it
     return None
-
-
-
 
 # ==========================================
 # SEARCH
@@ -303,14 +292,10 @@ async def cart_checkout_all(update, context):
     )
 
     kb = InlineKeyboardMarkup([
-            # --- Native Telegram Payments ---
-            [InlineKeyboardButton("💳 Smart Glocal (Native)", callback_data=f"pay_native:smart_glocal:{total:.2f}")],
-            [InlineKeyboardButton("🇸🇬 Redsys (Native)", callback_data=f"pay_native:redsys:{total:.2f}")],
             
             # --- Your Existing External Methods ---
             [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total:.2f}")],
             [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")],
-            [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total:.2f}")],
             
             [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
         ])
@@ -363,29 +348,6 @@ async def stripe_cart_checkout(update, context, total):
 
 
 # ==========================================
-# NETS QR (CART)
-# ==========================================
-async def show_nets_cart(update, context, total):
-    from modules.nets_qr import generate_nets_qr
-
-    q = update.callback_query
-    qr_img, ref = await generate_nets_qr(float(total))
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
-    ])
-
-    await q.message.reply_photo(
-        photo=InputFile(qr_img, filename=f"nets_cart_{ref}.png"),
-        caption=f"🟦 *NETS QR — Cart*\nTotal: *${total}*\nRef: `{ref}`",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-
-# ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
 async def on_buy(update, context, sku, qty):
@@ -401,7 +363,8 @@ async def on_buy(update, context, sku, qty):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
-        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
+        [InlineKeyboardButton("💳 Smart Glocal (Native)", callback_data=f"pay_native:smart_glocal:{total:.2f}")],
+        [InlineKeyboardButton("🇸🇬 Redsys (Native)", callback_data=f"pay_native:redsys:{total:.2f}")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
 
@@ -690,34 +653,6 @@ async def create_hitpay_cart_checkout(update, context, total):
         f"*HitPay Cart Checkout*\nTotal: ${float(total):.2f}",
         reply_markup=kb,
         parse_mode="Markdown",
-    )
-
-
-
-# ==========================================
-# NETS — SINGLE ITEM
-# ==========================================
-async def show_nets_qr(update, context, sku, qty):
-    from modules.nets_qr import generate_nets_qr
-
-    q = update.callback_query
-    item = get_any_product_by_sku(sku)
-    qty = clamp_qty(qty)
-    total = float(item["price"]) * qty
-
-    qr_img, ref = await generate_nets_qr(total)
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
-    ])
-
-    await q.message.reply_photo(
-        photo=InputFile(qr_img, filename=f"nets_{ref}.png"),
-        caption=f"NETS Payment\nAmount: ${total:.2f}\nRef: `{ref}`",
-        parse_mode="Markdown",
-        reply_markup=kb,
     )
 
 

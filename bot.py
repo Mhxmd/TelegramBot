@@ -372,8 +372,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("chat:delete:"):
             thread_id = data.split(":")[2]
+            storage.hide_chat_for_user(thread_id, user_id) 
             return await chat.on_chat_delete(update, context, thread_id)
-
+     
         if data == "chat:exit":
             return await chat.on_chat_exit(update, context)
 
@@ -396,11 +397,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await ui.admin_open_disputes(update, context)
 
         if data.startswith("admin_refund:"):
-            return await ui.admin_refund(update, context, data.split(":")[1])
+            oid = data.split(":")[1]
+            return await ui.admin_refund(update, context, oid)
 
         if data.startswith("admin_release:"):
-            return await ui.admin_release(update, context, data.split(":")[1])
-
+            oid = data.split(":")[1]
+            return await ui.admin_release(update, context, oid)
     except Exception as e:
         logger.exception("Callback router error")
         try:
