@@ -41,7 +41,15 @@ CATALOG = {
         "is_static": True,
         "stock": 999
     },
-
+    "blackcap": {
+        "name": "Black Cap", 
+        "price": 12, 
+        "emoji": "🧢", 
+        "seller_id": 0, 
+        "desc": "Matte black cap.",
+        "is_static": True,
+        "stock": 999
+    },
 }
 
 # ==========================================
@@ -70,15 +78,24 @@ def get_any_product_by_sku(sku: str):
                 return it
     return None
 
+
+
+
 # ==========================================
 # SEARCH
 # ==========================================
 def search_products_by_name(query: str):
-    query = query.lower().strip()
+    q = (query or "").lower().strip()
+    if not q:
+        return []
+
     results = []
     for it in enumerate_all_products():
-        if query in it.get("name", "").lower():
+        name = str(it.get("name") or it.get("title") or "").lower()
+        sku = str(it.get("sku") or "").lower()
+        if q in name or q in sku:
             results.append(it)
+
     return results
 
 async def ask_user_search(update, context):
@@ -139,6 +156,48 @@ async def show_user_search_results(update, context, results):
         parse_mode="Markdown"
     )
 
+async def show_search_results(update, context, results):
+    msg = update.effective_message
+
+    if not results:
+        return await msg.reply_text("❌ No products found. Try another name.")
+
+    blocks = []
+    rows = []
+
+    for it in results[:10]:
+        sku = it.get("sku")
+        if not sku:
+            continue
+
+        name = it.get("name") or it.get("title") or "Unnamed"
+        emoji = it.get("emoji", "📦")
+        price = float(it.get("price", 0))
+        stock = int(it.get("stock", 0))
+        sid = it.get("seller_id", 0)
+
+        seller_label = "System" if sid == 0 else f"User {sid}"
+        stock_text = f"{stock} left" if stock > 0 else "SOLD OUT"
+
+        blocks.append(
+            f"{emoji} {name} — ${price:.2f}\n"
+            f"Seller: {seller_label}\n"
+            f"Stock: {stock_text}"
+        )
+
+        rows.append([
+            InlineKeyboardButton(f"🔎 View {str(name)[:12]}", callback_data=f"view_item:{sku}"),
+            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
+        ])
+
+    rows.append([InlineKeyboardButton("🔍 Search Again", callback_data="shop:search")])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+
+    return await msg.reply_text(
+        "🔍 Search Results\n\n" + "\n\n".join(blocks),
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
 # ==========================================
 # MAIN MENU
 # ==========================================
@@ -186,26 +245,29 @@ def build_shop_keyboard(uid=None, page=0):
     display_lines = []
 
     for it in current_items:
-            sku = it["sku"]
-            price = it["price"]
-            stock = it.get("stock", 0)
-            sid = it.get("seller_id", 0)
-            
-            seller_label = "System" if sid == 0 else f"User {sid}"
-            stock_text = f"{stock} left" if stock > 0 else "🛑 *SOLD OUT*"
-            
-            display_lines.append(
-                f"{it.get('emoji','📦')} **{it['name']}** — `${price:.2f}`\n"
-                f"├ 👤 Seller: `{seller_label}`\n"
-                f"└ 📦 Stock: {stock_text}"
-            )
+        sku = it["sku"]
+        price = it["price"]
+        stock = it.get("stock", 0)
+        sid = it.get("seller_id", 0)
+        
+        seller_label = "System" if sid == 0 else f"User {sid}"
+        stock_text = f"{stock} left" if stock > 0 else "🛑 *SOLD OUT*"
+        
+        # TREE FORMAT:
+        # Using ├ for the seller and └ for the "Action" line to point at buttons
+        display_lines.append(
+            f"{it.get('emoji','📦')} **{it['name']}** — `${price:.2f}`\n"
+            f"├ 👤 Seller: `{seller_label}`\n"
+            f"└ 📦 Stock: {stock_text}"
+        )
 
-            # NEW: Added '⚡ Buy Now' which triggers the pay_native handler in bot.py
-            rows.append([
-                InlineKeyboardButton(f"🔎 View", callback_data=f"view_item:{sku}"),
-                InlineKeyboardButton(f"🛒 +Cart", callback_data=f"cart:add:{sku}"),
-                InlineKeyboardButton(f"⚡ Buy Now", callback_data=f"pay_native:smart_glocal:{price:.2f}:{sku}")
-            ])
+        # SIDE-BY-SIDE BUTTONS:
+        # Left button shows the name, Right button shows the action + price
+        # We use .ljust() or short strings to keep them from stacking
+        rows.append([
+            InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}"),
+            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
+        ])
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
@@ -292,13 +354,11 @@ async def cart_checkout_all(update, context):
     )
 
     kb = InlineKeyboardMarkup([
-            
-            # --- Your Existing External Methods ---
-            [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total:.2f}")],
-            [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")],
-            
-            [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
-        ])
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
+        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets_cart:{total}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
+    ])
 
     return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
 
@@ -348,6 +408,29 @@ async def stripe_cart_checkout(update, context, total):
 
 
 # ==========================================
+# NETS QR (CART)
+# ==========================================
+async def show_nets_cart(update, context, total):
+    from modules.nets_qr import generate_nets_qr
+
+    q = update.callback_query
+    qr_img, ref = await generate_nets_qr(float(total))
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+
+    await q.message.reply_photo(
+        photo=InputFile(qr_img, filename=f"nets_cart_{ref}.png"),
+        caption=f"🟦 *NETS QR — Cart*\nTotal: *${total}*\nRef: `{ref}`",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+
+# ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
 async def on_buy(update, context, sku, qty):
@@ -363,8 +446,7 @@ async def on_buy(update, context, sku, qty):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
-        [InlineKeyboardButton("💳 Smart Glocal (Native)", callback_data=f"pay_native:smart_glocal:{total:.2f}")],
-        [InlineKeyboardButton("🇸🇬 Redsys (Native)", callback_data=f"pay_native:redsys:{total:.2f}")],
+        [InlineKeyboardButton("🟦 NETS", callback_data=f"nets:{sku}:{qty}")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
 
@@ -653,6 +735,34 @@ async def create_hitpay_cart_checkout(update, context, total):
         f"*HitPay Cart Checkout*\nTotal: ${float(total):.2f}",
         reply_markup=kb,
         parse_mode="Markdown",
+    )
+
+
+
+# ==========================================
+# NETS — SINGLE ITEM
+# ==========================================
+async def show_nets_qr(update, context, sku, qty):
+    from modules.nets_qr import generate_nets_qr
+
+    q = update.callback_query
+    item = get_any_product_by_sku(sku)
+    qty = clamp_qty(qty)
+    total = float(item["price"]) * qty
+
+    qr_img, ref = await generate_nets_qr(total)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ I PAID (Simulate)", callback_data=f"payconfirm:{ref}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"paycancel:{ref}")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+
+    await q.message.reply_photo(
+        photo=InputFile(qr_img, filename=f"nets_{ref}.png"),
+        caption=f"NETS Payment\nAmount: ${total:.2f}\nRef: `{ref}`",
+        parse_mode="Markdown",
+        reply_markup=kb,
     )
 
 

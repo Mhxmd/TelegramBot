@@ -444,7 +444,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif search_mode == "products":
             results = ui.search_products_by_name(text)
+            logger.info(f"Search query='{text}' results={len(results)}")
             return await ui.show_search_results(update, context, results)
+
 
     # 4. CHAT SYSTEMS
     if chat.is_in_public_chat(uid):
