@@ -355,6 +355,7 @@ async def cart_checkout_all(update, context):
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
+        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_smartglocal_{sku}_{qty}")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
         [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
     ])
@@ -421,6 +422,7 @@ async def on_buy(update, context, sku, qty):
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
+        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_smartglocal_{sku}_{qty}")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
 
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],

@@ -83,51 +83,53 @@ async def handle_native_payment(update, context):
     await query.answer()
 
 async def handle_native_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Unified handler for both Single Item and Cart checkouts using .env tokens"""
     query = update.callback_query
     data = query.data.split(":")
     
-    # Format expected: pay_native:provider:amount:optional_sku
+    # Format: pay_native:provider:amount:sku
     provider = data[1]
     amount_str = data[2]
-    sku = data[3] if len(data) > 3 else "Cart Checkout"
+    sku = data[3] if len(data) > 3 else "Product"
+    user_id = update.effective_user.id  # Fixed: defined user_id
+
+    # Mapping providers to Env Variables
+    tokens = {
+        "smart_glocal": os.getenv("PROVIDER_TOKEN_SMART_GLOCAL"),
+        "redsys": os.getenv("PROVIDER_TOKEN_REDSYS"),
+        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE")
+    }
     
-    # Pull tokens from Environment
-    if provider == "smart_glocal":
-        token = os.getenv("PROVIDER_TOKEN_SMART_GLOCAL")
-    else:
-        token = os.getenv("PROVIDER_TOKEN_REDSYS")
+    token = tokens.get(provider)
 
     if not token:
         logger.error(f"Missing provider token for: {provider}")
-        return await query.answer("❌ Payment system offline (Token missing).", show_alert=True)
+        return await query.answer("❌ Payment provider not configured.", show_alert=True)
 
     try:
         price_in_cents = int(float(amount_str) * 100)
         
         await context.bot.send_invoice(
-            chat_id=update.effective_user.id,
+            chat_id=user_id,
             title=f"Order: {sku}",
-            description=f"Payment via {provider.replace('_', ' ').title()}",
-            payload=f"PAY|{uid}|{sku}",
+            description=f"Direct checkout via {provider.title()}",
+            payload=f"PAY|{user_id}|{sku}", # This prefix "PAY" must match your precheckout check
             provider_token=token,
             currency="USD",
-            prices=[LabeledPrice("Total", price_in_cents)],
+            prices=[LabeledPrice("Total Price", price_in_cents)],
             start_parameter="market-checkout"
         )
         await query.answer()
     except Exception as e:
-        logger.error(f"Invoice Generation Error: {e}")
-        await query.answer("❌ Failed to create invoice. Try again later.", show_alert=True)
+        logger.error(f"Invoice Error: {e}")
+        await query.answer("❌ Connection to Payment Provider failed.", show_alert=True)
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Final check before the user enters their card details"""
     query = update.pre_checkout_query
-    # Check if we have stock one last time here if you want
-    if query.invoice_payload != "marketplace-cart-checkout":
-        await query.answer(ok=False, error_message="Something went wrong...")
-    else:
+    # Allow any payload starting with PAY
+    if query.invoice_payload.startswith("PAY"):
         await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Order validation failed. Try again.")
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Triggered after the money is actually processed"""
