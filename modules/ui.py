@@ -9,6 +9,8 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from typing import Optional
 import stripe
+import logging
+logger = logging.getLogger(__name__)
 
 from modules import storage, seller, chat, inventory, shopping_cart
 import modules.wallet_utils as wallet
@@ -349,19 +351,21 @@ async def cart_checkout_all(update, context):
 
     txt = (
         "🧾 *Cart Checkout*\n\n"
-        f"• Total: *${total:.2f}*\n\n"
+        f"• Total Items: *{len(cart)}*\n"
+        f"• Total Amount: *SGD {total:.2f}*\n\n"
         "_Choose payment method:_"
     )
 
+    # Note: SKU is set to 'Cart' for bulk purchases to identify them in bot.py
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe_cart:{total}")],
-        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_smartglocal_{sku}_{qty}")],
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:Cart")],
+        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:Cart")],
+        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total}:Cart")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
         [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
     ])
 
     return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
-
 # ==========================================
 # STRIPE — CART CHECKOUT
 # ==========================================
@@ -369,11 +373,18 @@ async def stripe_cart_checkout(update, context, total):
     import requests, time
     q = update.callback_query
     uid = update.effective_user.id
-    order_id = f"cart_{uid}_{int(time.time())}"
     
+    # Check if we are in a cart flow or single item flow
+    is_cart = "Cart" in (q.data or "")
+    order_id = f"{'cart' if is_cart else 'sku'}_{uid}_{int(time.time())}"
+    
+    await q.answer("Connecting to Stripe...")
+
     try:
         SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-        
+        if not SERVER_BASE:
+            return await q.edit_message_text("❌ SERVER_BASE_URL not set in .env")
+
         res = requests.post(
             f"{SERVER_BASE}/create_checkout_session",
             json={
@@ -383,30 +394,34 @@ async def stripe_cart_checkout(update, context, total):
             },
             timeout=15
         )
-        res.raise_for_status()
+        
+        # If this fails with 404, it means server.py isn't handling this URL correctly
+        res.raise_for_status() 
+        
         data = res.json()
         checkout_url = data["checkout_url"]
 
-        # Log the order
-        storage.add_order(uid, "Cart Purchase", 1, float(total), "Stripe", 0)
+        storage.add_order(uid, "Stripe Purchase", 1, float(total), "Stripe", 0)
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 Pay Total Now", url=checkout_url)],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
+            [InlineKeyboardButton("💳 Pay Securely Now", url=checkout_url)],
+            [InlineKeyboardButton("🔙 Back", callback_data="cart:view" if is_cart else "menu:shop")],
         ])
 
         await q.edit_message_text(
-            f"🧾 *Stripe Cart Checkout*\n\nTotal Amount: *${float(total):.2f}*\n\n"
-            "_Please click the button below to pay via card._",
+            f"🧾 *Secure Checkout*\n\nTotal: *SGD {float(total):.2f}*\n\n"
+            "Click below to pay via our secure Stripe portal.",
             reply_markup=kb,
             parse_mode="Markdown",
         )
 
+    except requests.exceptions.HTTPError as e:
+        # This will specifically tell you if it's a 404 (wrong URL) or 500 (server crash)
+        print(f"Server Error: {e}") 
+        return await q.edit_message_text(f"❌ Payment Server Error ({res.status_code}). Please check if server.py is running.")
     except Exception as e:
-        return await q.edit_message_text(f"❌ Stripe Cart Error: {e}")
-    
-
-
+        print(f"General Error: {e}")
+        return await q.edit_message_text(f"❌ Connection Failed: {e}")
 # ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
@@ -420,17 +435,19 @@ async def on_buy(update, context, sku, qty):
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
 
+    # FORMAT: pay_native:provider:amount:sku
+    # This matches the router in bot.py
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"stripe:{sku}:{qty}")],
-        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_smartglocal_{sku}_{qty}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
-
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:{sku}")],
+        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:{sku}")],
+        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total}:{sku}")],
+        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")], 
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
 
     txt = (
         f"{item.get('emoji')} *{item['name']}*\n"
-        f"Qty: *{qty}*\nTotal: *${total:.2f}*"
+        f"Qty: *{qty}*\nTotal: *SGD {total:.2f}*" # Matching your Stripe dashboard currency
     )
 
     await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
@@ -573,50 +590,51 @@ async def handle_start_deep_link(update: Update, context: ContextTypes.DEFAULT_T
 # STRIPE — SINGLE ITEM
 # ==========================================
 async def create_stripe_checkout(update, context, sku, qty):
-    import requests
-
+    """
+    Switched from external Flask server to Native Telegram Invoice.
+    This fixes the 404 error by bypassing the ngrok /create_checkout_session URL.
+    """
     q = update.callback_query
     item = get_any_product_by_sku(sku)
+    
+    if not item:
+        return await q.answer("❌ Item no longer available.", show_alert=True)
+
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
-    import time
-    order_id = f"ord_{user_id}_{int(time.time())}"
-
+    
+    # Get the live Stripe token from environment
+    stripe_token = os.getenv("PROVIDER_TOKEN_STRIPE")
+    
+    if not stripe_token:
+        return await q.answer("❌ Stripe is currently unavailable (Token missing).", show_alert=True)
 
     try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        # Convert to cents for Stripe/Telegram
+        price_in_cents = int(total * 100)
+        
+        # 1. Add record to your database
+        storage.add_order(user_id, item["name"], qty, total, "Stripe", int(item.get("seller_id", 0)))
 
-        res = requests.post(
-            f"{SERVER_BASE}/create_checkout_session",
-            json={
-            "order_id": order_id,
-            "amount": total,
-            "user_id": user_id
-            },
-            timeout=15
+        # 2. Send the native Telegram invoice
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"Buy {item['name']}",
+            description=f"Quantity: {qty} | Secure checkout via Stripe",
+            payload=f"PAY|{user_id}|{sku}",
+            provider_token=stripe_token,
+            currency="SGD", # Matches your dashboard currency
+            prices=[LabeledPrice(f"{item['name']} x{qty}", price_in_cents)],
+            start_parameter="stripe-purchase"
         )
-
-        res.raise_for_status()   # 👈 catches 4xx / 5xx properly
-        data = res.json()
-        checkout_url = data["checkout_url"]
-
+        
+        # Close the callback query to stop the loading spinner
+        await q.answer()
+        
     except Exception as e:
-        return await q.edit_message_text(f"❌ Stripe error: {e}")
-
-
-    storage.add_order(user_id, item["name"], qty, total, "Stripe", int(item.get("seller_id", 0)))
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay Now", url=checkout_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
-    ])
-
-    await q.edit_message_text(
-        f"*Stripe Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
+        logger.error(f"Stripe Native Error: {e}")
+        await q.edit_message_text(f"❌ Could not initialize Stripe: {e}")
 
 #HitPay Checkout - Single Item
 

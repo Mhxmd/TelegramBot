@@ -262,37 +262,39 @@ async def hitpay_create_payment(request: Request):
 @app.post("/create_checkout_session")
 async def create_checkout_session(request: Request):
     body = await request.json()
-
     order_id = body.get("order_id")
     user_id = body.get("user_id")
     amount = body.get("amount")
 
     if not order_id or not user_id or amount is None:
-        raise HTTPException(status_code=400, detail="Missing fields")
+        raise HTTPException(status_code=400, detail="Missing order_id, user_id, or amount")
 
-    amount_cents = int(round(float(amount) * 100))
+    try:
+        # Stripe expects integers in cents
+        amount_cents = int(round(float(amount) * 100))
 
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        mode="payment",
-        line_items=[{
-            "price_data": {
-                "currency": "sgd",
-                "product_data": {"name": f"Order #{order_id}"},
-                "unit_amount": amount_cents,
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "sgd",
+                    "product_data": {"name": f"Xchange Order #{order_id}"},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }],
+            success_url=f"{PUBLIC_BASE_URL}/payment/success?order_id={order_id}",
+            cancel_url=f"{PUBLIC_BASE_URL}/payment/cancel?order_id={order_id}",
+            metadata={
+                "order_id": str(order_id),
+                "user_id": str(user_id),
             },
-            "quantity": 1,
-        }],
-        success_url=f"{PUBLIC_BASE_URL}/payment/success?order_id={order_id}",
-        cancel_url=f"{PUBLIC_BASE_URL}/payment/cancel?order_id={order_id}",
-        metadata={
-            "type": "escrow_payment",
-            "order_id": order_id,
-            "user_id": user_id,
-        },
-    )
-
-    return {"checkout_url": session.url}
+        )
+        return {"checkout_url": session.url}
+    except Exception as e:
+        log.error(f"Stripe Session Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
 # 📡 STRIPE WEBHOOK
@@ -337,20 +339,3 @@ async def hitpay_webhook(request: Request):
 
     return {"status": "ok"}
 
-# ============================================================
-# Successful Payment Handler
-# ============================================================
-
-@app.route('/payment_success')
-def payment_success():
-    # This renders a simple HTML page in the user's browser
-    return """
-    <html>@
-        <head><title>Success!</title></head>
-        <body style="text-align: center; padding: 50px; font-family: sans-serif;">
-            <h1>✅ Payment Successful!</h1>
-            <p>Thank you for your purchase.</p>
-            <p>You can now close this window and return to the Telegram Bot.</p>
-        </body>
-    </html>
-    """

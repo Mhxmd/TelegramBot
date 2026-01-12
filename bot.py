@@ -83,20 +83,21 @@ async def handle_native_payment(update, context):
     await query.answer()
 
 async def handle_native_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unified handler for Redsys, Smart Glocal, and Stripe using .env tokens"""
     query = update.callback_query
     data = query.data.split(":")
     
-    # Format: pay_native:provider:amount:sku
+    # Format expected from ui.py: pay_native:provider:amount:sku
     provider = data[1]
     amount_str = data[2]
     sku = data[3] if len(data) > 3 else "Product"
-    user_id = update.effective_user.id  # Fixed: defined user_id
+    user_id = update.effective_user.id 
 
-    # Mapping providers to Env Variables
+    # Mapping providers to Environment Variables
     tokens = {
         "smart_glocal": os.getenv("PROVIDER_TOKEN_SMART_GLOCAL"),
         "redsys": os.getenv("PROVIDER_TOKEN_REDSYS"),
-        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE")
+        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE") # Your pk_live_... key
     }
     
     token = tokens.get(provider)
@@ -106,31 +107,35 @@ async def handle_native_checkout(update: Update, context: ContextTypes.DEFAULT_T
         return await query.answer("❌ Payment provider not configured.", show_alert=True)
 
     try:
+        # Stripe and Telegram require prices in the smallest currency unit (cents)
         price_in_cents = int(float(amount_str) * 100)
         
         await context.bot.send_invoice(
             chat_id=user_id,
             title=f"Order: {sku}",
-            description=f"Direct checkout via {provider.title()}",
-            payload=f"PAY|{user_id}|{sku}", # This prefix "PAY" must match your precheckout check
+            description=f"Direct checkout via {provider.replace('_', ' ').title()}",
+            payload=f"PAY|{user_id}|{sku}", 
             provider_token=token,
-            currency="USD",
+            currency="SGD",  # Set to SGD to match your Stripe Dashboard balance
             prices=[LabeledPrice("Total Price", price_in_cents)],
             start_parameter="market-checkout"
         )
         await query.answer()
     except Exception as e:
-        logger.error(f"Invoice Error: {e}")
-        await query.answer("❌ Connection to Payment Provider failed.", show_alert=True)
+        logger.error(f"Invoice Generation Error: {e}")
+        await query.answer("❌ Failed to create invoice. Check if provider token is valid.", show_alert=True)
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Final check before the user enters card details. Must return ok=True to proceed."""
     query = update.pre_checkout_query
-    # Allow any payload starting with PAY
+    
+    # Validate that the payload matches our generated invoices
     if query.invoice_payload.startswith("PAY"):
         await query.answer(ok=True)
     else:
-        await query.answer(ok=False, error_message="Order validation failed. Try again.")
-
+        logger.warning(f"PreCheckout Rejected: Invalid payload {query.invoice_payload}")
+        await query.answer(ok=False, error_message="Order validation failed. Please try again")
+        
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Triggered after the money is actually processed"""
     uid = update.effective_user.id
@@ -247,9 +252,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await ui.on_checkout(update, context, sku, int(qty))
 
         # PAYMENTS SINGLE ITEM
-        if data.startswith("stripe:"):
-            _, sku, qty = data.split(":")
-            return await ui.create_stripe_checkout(update, context, sku, int(qty))
+        # Inside bot.py -> callback_router
+        if data.startswith("pay_native:"):
+            parts = data.split(":")
+            provider = parts[1]
+            amount = parts[2]
+            sku = parts[3] if len(parts) > 3 else "Cart"
+
+            if provider == "stripe":
+                # Redirect to the function that calls your FastAPI server
+                return await ui.stripe_cart_checkout(update, context, amount)
+            
+            # Otherwise, try native (for Smart Glocal / Redsys)
+            return await handle_native_checkout(update, context)
+            # Call your function that talks to your FastAPI server
+            return await ui.create_stripe_checkout(update, context, sku, amount)
+
 
         if data.startswith("hitpay:"):
             _, sku, qty = data.split(":")
