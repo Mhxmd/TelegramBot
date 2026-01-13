@@ -205,29 +205,52 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             return await msg.reply_text("❌ Invalid price. Please send a number.")
 
         st["price"] = price
+        st["phase"] = "add_qty"
+        return await msg.reply_text(
+            "📦 Send the quantity (stock), e.g. 5:",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
+    # STEP 3 — QUANTITY
+    if st["phase"] == "add_qty":
+        try:
+            qty = int(text.strip())
+            if qty <= 0:
+                raise ValueError
+        except Exception:
+            return await msg.reply_text("❌ Invalid quantity. Send a whole number above 0.")
+
+        st["qty"] = qty
         st["phase"] = "add_desc"
         return await msg.reply_text(
             "📝 Send a short *description*:",
             parse_mode=ParseMode.MARKDOWN
         )
 
-    # STEP 3 — DESCRIPTION (FINAL)
+        # STEP 4 — DESCRIPTION (FINAL)
     if st["phase"] == "add_desc":
         title = st["title"]
         price = st["price"]
+        qty = st["qty"]
         desc = text
 
-        sku = storage.add_seller_product(user_id, title, price, desc)
+        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty)
         storage.user_flow_state.pop(user_id, None)
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")],
+            [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop")],
+        ])
 
         await msg.reply_text(
             f"✅ *Listing Added!*\n\n"
             f"• *Title:* {title}\n"
             f"• *Price:* ${price:.2f}\n"
+            f"• *Stock:* {qty}\n"
             f"• *SKU:* `{sku}`",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb
         )
-
 
 # ==========================
 # SELLER REGISTRATION

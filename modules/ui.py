@@ -822,7 +822,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
     
     if tab == "orders":
             # 1. Cleanup old unpaid orders
-            storage.expire_stale_pending_orders(grace_seconds=900)
+            storage.expire_stale_pending_orders(expire_seconds=900)
 
             orders = storage.list_orders_for_user(uid)
 

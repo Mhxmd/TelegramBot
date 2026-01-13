@@ -4,11 +4,18 @@ import time
 from typing import List, Dict, Tuple, Set
 from modules import inventory
 
+def _ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 # =========================================================
 # FILE PATHS & CONFIG
 # =========================================================
 BALANCES_FILE = "balances.json"
-ORDERS_FILE = "orders.json"
+ORDERS_FILE = "data/orders.json"
+ORDER_EXPIRE_SECONDS = 15 * 60
 ROLES_FILE = "roles.json"
 SELLER_PRODUCTS_FILE = "seller_products.json"
 MESSAGES_FILE = "messages.json"
@@ -43,8 +50,10 @@ FILES_AND_DEFAULTS = {
 
 for path, default in FILES_AND_DEFAULTS.items():
     if not os.path.exists(path):
+        _ensure_parent_dir(path)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(default, f, indent=2)
+
 
 # =========================================================
 # JSON HELPERS
@@ -58,8 +67,10 @@ def load_json(path: str):
             return {}
 
 def save_json(path: str, data):
+    _ensure_parent_dir(path)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
 
 # =========================================================
 # ANTI-SPAM
@@ -145,6 +156,98 @@ def toggle_product_visibility(sku: str):
     return False
 
 # =========================================================
+# SELLER PRODUCTS
+# =========================================================
+def add_seller_product(
+    seller_id: int,
+    title: str,
+    price: float,
+    desc: str,
+    stock: int = 1,
+    emoji: str = "📦"
+) -> str:
+    data = load_json(SELLER_PRODUCTS_FILE)
+
+    sid = str(seller_id)
+    data.setdefault(sid, [])
+
+    sku = f"sku_{seller_id}_{int(time.time())}"
+
+    product = {
+        "sku": sku,
+        "name": title,
+        "price": float(price),
+        "desc": desc,
+        "stock": int(stock),
+        "emoji": emoji,
+        "seller_id": seller_id,
+        "hidden": False,
+        "created_ts": int(time.time())
+    }
+
+    data[sid].append(product)
+    save_json(SELLER_PRODUCTS_FILE, data)
+
+    return sku
+
+def get_seller_product_by_sku(sku: str) -> Tuple[str, Dict] | Tuple[None, None]:
+    data = load_json(SELLER_PRODUCTS_FILE)
+    for sid, items in data.items():
+        for it in items:
+            if it.get("sku") == sku:
+                return sid, it
+    return None, None
+
+
+def update_seller_stock(sku: str, delta: int) -> bool:
+    data = load_json(SELLER_PRODUCTS_FILE)
+    for sid, items in data.items():
+        for it in items:
+            if it.get("sku") == sku:
+                cur = int(it.get("stock", 0))
+                nxt = cur + int(delta)
+                if nxt < 0:
+                    return False
+                it["stock"] = nxt
+                save_json(SELLER_PRODUCTS_FILE, data)
+                return True
+    return False
+
+
+def set_seller_stock(sku: str, stock: int) -> bool:
+    data = load_json(SELLER_PRODUCTS_FILE)
+    for sid, items in data.items():
+        for it in items:
+            if it.get("sku") == sku:
+                it["stock"] = max(0, int(stock))
+                save_json(SELLER_PRODUCTS_FILE, data)
+                return True
+    return False
+
+def list_seller_products(seller_id: int) -> List[Dict]:
+    data = load_json(SELLER_PRODUCTS_FILE)
+    items = data.get(str(seller_id), [])
+    # return only active (not hidden) listings
+    return [p for p in items if not p.get("hidden", False)]
+
+def remove_seller_product(seller_id: int, sku: str) -> bool:
+    data = load_json(SELLER_PRODUCTS_FILE)
+    sid = str(seller_id)
+
+    if sid not in data:
+        return False
+
+    items = data[sid]
+    new_items = [p for p in items if p.get("sku") != sku]
+
+    if len(new_items) == len(items):
+        return False  # SKU not found
+
+    data[sid] = new_items
+    save_json(SELLER_PRODUCTS_FILE, data)
+    return True
+
+# =========================================================
 # USER MANAGEMENT & SEARCH
 # =========================================================
 def ensure_user_exists(user_id: int, username: str):
@@ -195,6 +298,14 @@ def get_seller_status(user_id: int) -> str:
     if user_id == ADMIN_ID: return "verified"
     users = load_json(USERS_FILE)
     return users.get(str(user_id), {}).get("seller_status", "pending")
+
+def set_seller_status(user_id: int, status: str):
+    users = load_json(USERS_FILE)
+    uid = str(user_id)
+    users.setdefault(uid, {})
+    users[uid]["seller_status"] = status
+    users[uid]["last_updated_ts"] = int(time.time())
+    save_json(USERS_FILE, users)
 
 # =========================================================
 # CHAT SYSTEM
@@ -263,4 +374,46 @@ def unarchive_all_for_user(user_id: int) -> int:
             o.pop(key, None)
             changed += 1
     if changed: save_json(ORDERS_FILE, orders)
+    return changed
+
+def expire_stale_pending_orders(expire_seconds: int = ORDER_EXPIRE_SECONDS) -> int:
+    """
+    Marks pending orders as expired if they are older than expire_seconds.
+    Returns number of orders expired.
+    """
+    data = load_json(ORDERS_FILE)  # use your existing load_json signature
+    now = int(time.time())
+    changed = 0
+
+    # Support both dict and list storage styles
+    if isinstance(data, dict):
+        orders_iter = data.values()
+    else:
+        orders_iter = data
+
+    for o in orders_iter:
+        if not isinstance(o, dict):
+            continue
+
+        status = o.get("status")
+        if status != "pending":
+            continue
+
+        created_at = o.get("ts")
+        if created_at is None:
+            continue
+
+        try:
+            created_at = int(created_at)
+        except Exception:
+            continue
+
+        if now - created_at >= expire_seconds:
+            o["status"] = "expired"
+            o["expired_at"] = now
+            changed += 1
+
+    if changed:
+        save_json(ORDERS_FILE, data)  # use your existing save_json
+
     return changed
