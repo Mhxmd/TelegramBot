@@ -204,10 +204,15 @@ async def show_search_results(update, context, results):
 # MAIN MENU
 # ==========================================
 def build_main_menu(balance: float, uid: int = None):
+    # prevent crash when uid is missing
     cart_count = 0
-    if uid:
-        cart = shopping_cart.get_user_cart(uid)
-        cart_count = sum(item["qty"] for item in cart.values())
+
+    try:
+        if uid is not None:
+            cart = shopping_cart.get_user_cart(uid)
+            cart_count = sum(item.get("qty", 0) for item in cart.values())
+    except:
+        cart_count = 0
 
     cart_label = f"🛒 Cart ({cart_count})"
 
@@ -230,7 +235,9 @@ def build_main_menu(balance: float, uid: int = None):
         "══════════════════════\n"
         "_Buy • Sell • Escrow • Trade Safely_\n"
     )
+
     return kb, text
+
 
 
 # ==========================================
@@ -901,8 +908,10 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
         return await show_functions_menu(update, context)
 
     if tab in ("main", "refresh"):
-        kb, txt = build_main_menu(storage.get_balance(uid))
+        kb, txt = build_main_menu(storage.get_balance(uid), uid)
         return await safe_edit(txt, kb)
+
+
     
 # ==========================================
 # Handling Post-Completion Disputes

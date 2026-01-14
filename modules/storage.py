@@ -3,6 +3,8 @@ import json
 import time
 from typing import List, Dict, Tuple, Set
 from modules import inventory
+from typing import Optional, Tuple, Dict
+
 
 def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
@@ -190,7 +192,8 @@ def add_seller_product(
 
     return sku
 
-def get_seller_product_by_sku(sku: str) -> Tuple[str, Dict] | Tuple[None, None]:
+def get_seller_product_by_sku(sku: str) -> Optional[Tuple[str, Dict]]:
+
     data = load_json(SELLER_PRODUCTS_FILE)
     for sid, items in data.items():
         for it in items:
