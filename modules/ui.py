@@ -2,6 +2,7 @@
 
 import os
 import qrcode
+import re
 from io import BytesIO
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
@@ -86,18 +87,45 @@ def get_any_product_by_sku(sku: str):
 # ==========================================
 # SEARCH
 # ==========================================
-def search_products_by_name(query: str):
-    q = (query or "").lower().strip()
+def _norm_text(s: str) -> str:
+    s = str(s or "").lower()
+    # keep letters/numbers/spaces only
+    s = re.sub(r"[^a-z0-9\s]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def search_products_by_name(query: str, include_sold_out: bool = True):
+    q = _norm_text(query)
     if not q:
+        return []
+
+    tokens = [t for t in q.split(" ") if t]
+    if not tokens:
         return []
 
     results = []
     for it in enumerate_all_products():
-        name = str(it.get("name") or it.get("title") or "").lower()
-        sku = str(it.get("sku") or "").lower()
-        if q in name or q in sku:
-            results.append(it)
+        if it.get("hidden", False):
+            continue
 
+        name_raw = it.get("name") or it.get("title") or ""
+        sku_raw = it.get("sku") or ""
+
+        hay = f"{_norm_text(name_raw)} {_norm_text(sku_raw)}"
+
+        # require ALL tokens to appear somewhere
+        if all(t in hay for t in tokens):
+            stock = int(it.get("stock", 0) or 0)
+            if include_sold_out or stock > 0:
+                results.append(it)
+
+    # sort by relevance: startswith first, then shorter name
+    def score(it):
+        name = _norm_text(it.get("name") or it.get("title") or "")
+        starts = 0 if name.startswith(tokens[0]) else 1
+        return (starts, len(name))
+
+    results.sort(key=score)
     return results
 
 async def ask_user_search(update, context):
@@ -187,10 +215,15 @@ async def show_search_results(update, context, results):
             f"Stock: {stock_text}"
         )
 
-        rows.append([
-            InlineKeyboardButton(f"🔎 View {str(name)[:12]}", callback_data=f"view_item:{sku}"),
-            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
-        ])
+        view_btn = InlineKeyboardButton(f"🔎 View {str(name)[:12]}", callback_data=f"view_item:{sku}")
+
+        if stock > 0:
+            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
+            rows.append([view_btn, cart_btn])
+        else:
+            # no add-to-cart button when sold out
+            rows.append([view_btn])
+
 
     rows.append([InlineKeyboardButton("🔍 Search Again", callback_data="shop:search")])
     rows.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
