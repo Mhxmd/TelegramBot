@@ -6,7 +6,7 @@
 import os
 import logging
 from dotenv import load_dotenv
-from telegram import Update, LabeledPrice # Added LabeledPrice
+from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, ContextTypes, filters , PreCheckoutQueryHandler
@@ -18,9 +18,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Modules
+# ==========================
+# MODULES IMPORT
+# ==========================
 from modules import storage, ui, chat, seller, shopping_cart, inventory
-import modules.wallet_utils as wallet
-
+from modules import wallet_utils as wallet  # <--- MUST HAVE "as wallet"
 
 # ==========================
 # Logging
@@ -342,9 +344,55 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, total = data.split(":")
             return await ui.show_paynow_cart(update, context, total)
 
-        if data.startswith("nets_cart:"):
-            _, total = data.split(":")
-            return await ui.show_nets_cart(update, context, float(total))
+        # --- SOLANA CRYPTO CHECKOUT ---
+        if data.startswith("pay_crypto:solana:"):
+            _, _, usd_amount = data.split(":")
+            usd_val = float(usd_amount)
+            
+            sol_price = 100.0  # Replace with API call for real-time rates
+            sol_needed = usd_val / sol_price
+            
+            # FIX: Changed 'uid' to 'user_id'
+            user_wallet = wallet.ensure_user_wallet(user_id) 
+            balance = wallet.get_balance_devnet(user_wallet["public_key"])
+            
+            if balance < sol_needed:
+                return await q.answer(f"❌ Insufficient SOL. Need {sol_needed:.4f}, have {balance:.4f}", show_alert=True)
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirm SOL Payment", callback_data=f"confirm_crypto_pay:{sol_needed}:{usd_val}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")]
+            ])
+            
+            return await q.edit_message_text(
+                f"💎 *Solana Checkout*\n\n"
+                f"Total USD: *${usd_val:.2f}*\n"
+                f"Estimated SOL: *{sol_needed:.4f} SOL*\n\n"
+                f"Confirm payment from your bot wallet?",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+
+        # --- CRYPTO EXECUTION ---
+        if data.startswith("confirm_crypto_pay:"):
+            _, sol_amt, usd_amt = data.split(":")
+            
+            # 🚨 IMPORTANT: Replace with your actual business wallet address
+            ESCROW_WALLET = "YOUR_SYSTEM_SOLANA_WALLET_ADDRESS" 
+            
+            user_wallet = wallet.ensure_user_wallet(user_id)
+            result = wallet.send_sol(user_wallet["private_key"], ESCROW_WALLET, float(sol_amt))
+            
+            if isinstance(result, dict) and "error" in result:
+                return await q.edit_message_text(f"❌ Crypto Error: {result['error']}")
+            
+            shopping_cart.clear_cart(user_id)
+            storage.add_order(user_id, "Cart Purchase (Crypto)", 1, float(usd_amt), "Solana", 1)
+            
+            return await q.edit_message_text(
+                f"✅ *Payment Successful!*\n\nTransaction ID:\n`{result}`",
+                parse_mode="Markdown"
+            )
 
         if data == "cart:confirm_payment":
             await shopping_cart.clear_cart(update.effective_user.id)

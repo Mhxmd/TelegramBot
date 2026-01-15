@@ -344,36 +344,6 @@ async def view_item_details(update, context, sku):
     
     await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 # ==========================================
-# CART CHECKOUT (ALL ITEMS)
-# ==========================================
-async def cart_checkout_all(update, context):
-    q = update.callback_query
-    uid = update.effective_user.id
-
-    cart = shopping_cart.get_user_cart(uid)
-    if not cart:
-        return await q.answer("Your cart is empty.", show_alert=True)
-
-    total = sum(item["price"] * item["qty"] for item in cart.values())
-
-    txt = (
-        "🧾 *Cart Checkout*\n\n"
-        f"• Total Items: *{len(cart)}*\n"
-        f"• Total Amount: *SGD {total:.2f}*\n\n"
-        "_Choose payment method:_"
-    )
-
-    # Note: SKU is set to 'Cart' for bulk purchases to identify them in bot.py
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:Cart")],
-        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:Cart")],
-        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total}:Cart")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="cart:view")],
-    ])
-
-    return await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
-# ==========================================
 # STRIPE — CART CHECKOUT
 # ==========================================
 async def stripe_cart_checkout(update, context, total):
@@ -785,17 +755,27 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
         return await shopping_cart.view_cart(update, context)
 
     if tab == "wallet":
-        bal = storage.get_balance(uid)
-        pub = wallet.ensure_user_wallet(uid)["public_key"]
+        # 1. Get the local stored balance (e.g., USD/Credits)
+        local_bal = storage.get_balance(uid) 
+        
+        # 2. Get the Solana wallet info
+        user_wallet = wallet_utils.ensure_user_wallet(uid)
+        pub = user_wallet["public_key"]
+        
+        # 3. Get actual SOL balance from Devnet
+        on_chain = wallet_utils.get_balance_devnet(pub)
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Deposit", callback_data="wallet:deposit")],
-            [InlineKeyboardButton("📤 Withdraw", callback_data="wallet:withdraw")],
+            [InlineKeyboardButton("📥 Deposit / View Address", callback_data="wallet:deposit")],
+            [InlineKeyboardButton("📤 Withdraw SOL", callback_data="wallet:withdraw")],
             [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
         ])
 
         return await safe_edit(
-            f"💼 **Wallet**\n• Balance: `${bal:.2f}`\n• Solana: `{pub}`",
+            f"💼 **Wallet Dashboard**\n\n"
+            f"💳 **Stored Balance:** `${local_bal:.2f}`\n"
+            f"🧪 **Solana Devnet:** `{on_chain:.4f} SOL`\n\n"
+            f"📍 **Public Key:**\n`{pub}`",
             kb,
         )
 

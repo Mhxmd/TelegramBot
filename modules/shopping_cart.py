@@ -214,6 +214,7 @@ async def view_cart(update, context):
     rows = []
     total = 0
 
+    # 1. Loop through items to build the text and the +/- buttons
     for sku, item in cart.items():
         emoji = item.get("emoji", "🛒")
         name = item["name"]
@@ -224,20 +225,32 @@ async def view_cart(update, context):
 
         display.append(f"{emoji} *{name}* — `${price:.2f}` × {qty} = *${subtotal:.2f}*")
 
-        # clean UI per product block
+        # Add quantity controls for EACH item
         rows.append([
-            InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
+            InlineKeyboardButton(f"➖ {name}", callback_data=f"cart:subqty:{sku}"),
             InlineKeyboardButton(str(qty), callback_data="noop"),
-            InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}"),
-            InlineKeyboardButton("❌ Remove", callback_data=f"cart:remove:{sku}")
+            InlineKeyboardButton(f"➕ {name}", callback_data=f"cart:addqty:{sku}"),
         ])
 
     display.append(f"\n💰 *Total:* `${total:.2f}`")
 
-    # payment buttons remain your team's format
-    rows.append([InlineKeyboardButton("💳 Pay via Smart Glocal", callback_data=f"pay_native:smart_glocal:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🇸🇬 Pay via Redsys", callback_data=f"pay_native:redsys:{total:.2f}")])
+    # 2. Add Payment Options (These apply to the WHOLE cart)
+    # Stripe Cart
+    rows.append([InlineKeyboardButton("💳 Pay via Stripe (Cart)", callback_data=f"pay_native:stripe:{total:.2f}:Cart")])
+    
+    # HitPay Cart (Note: You'll need a hitpay_cart handler in bot.py for this)
+    rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")])
+    
+        # Add this inside the view_cart function, under "2. Add Payment Options"
+    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}")])
 
+    # Other Providers
+    rows.append([
+        InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total:.2f}:Cart"),
+        InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:Cart")
+    ])
+
+    # 3. Navigation
     rows.append([InlineKeyboardButton("🧹 Clear All", callback_data="cart:clear_all")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 

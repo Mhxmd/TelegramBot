@@ -239,7 +239,12 @@ def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
             recent_blockhash=blockhash
         )
 
-        return solana_devnet.send_transaction(tx)
+     # Change this:
+# return solana_devnet.send_transaction(tx)
+
+        # To this:
+        response = solana_devnet.send_transaction(tx)
+        return response.value  # Returns the transaction signature (ID) 
 
     except Exception as e:
         logger.error(f"send_sol error: {e}")
