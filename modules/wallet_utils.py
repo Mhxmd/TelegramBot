@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solders.system_program import transfer
+from solders.system_program import transfer, TransferParams
 from solders.transaction import Transaction
 from solders.message import Message
 
@@ -67,13 +67,24 @@ def ensure_user_wallet(user_id: int):
 # ============================================================
 # On-chain balances
 # ============================================================
-def get_balance_devnet(pubkey: str) -> float:
+def get_balance_devnet(public_key_str):
     try:
-        r = solana_devnet.get_balance(Pubkey.from_string(pubkey))
-        return r["result"]["value"] / 1e9
+        from solana.rpc.api import Client
+        from solders.pubkey import Pubkey
+        
+        client = Client("https://api.devnet.solana.com")
+        pubkey = Pubkey.from_string(public_key_str)
+        
+        response = client.get_balance(pubkey)
+        
+        # Access the value attribute directly from the object
+        lamports = response.value 
+        sol_balance = lamports / 1_000_000_000
+        return sol_balance
+        
     except Exception as e:
         logger.error(f"Devnet balance error: {e}")
-        return 0.0
+        return 0
 
 
 def get_balance_both(pubkey: str):
@@ -218,33 +229,40 @@ async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 def send_sol(sender_privkey: str, recipient_pubkey: str, amount_sol: float):
     try:
-        lamports = int(amount_sol * 1e9)
-
+        # 1. Convert SOL to Lamports (1 SOL = 10^9 Lamports)
+        lamports = int(amount_sol * 1_000_000_000)
         sender = Keypair.from_bytes(base58.b58decode(sender_privkey))
         to_pubkey = Pubkey.from_string(recipient_pubkey)
 
-        blockhash = solana_devnet.get_latest_blockhash()["result"]["value"]["blockhash"]
+        # 2. Fetch the latest blockhash from the client
+        blockhash_resp = solana_client.get_latest_blockhash()
+        recent_blockhash = blockhash_resp.value.blockhash
 
-        ix = transfer(sender.pubkey(), to_pubkey, lamports)
-
-        msg = Message.new_with_blockhash(
-            [ix],
-            sender.pubkey(),
-            blockhash
+        # 3. Create the transfer instruction
+        # FIX: The transfer() function expects exactly one TransferParams object.
+        ix = transfer(
+            TransferParams(
+                from_pubkey=sender.pubkey(),
+                to_pubkey=to_pubkey,
+                lamports=lamports
+            )
         )
 
+        # 4. Compile the message and create the transaction
+        # Note: Message.new_with_blockhash is standard for legacy transactions in solders
+        msg = Message.new_with_blockhash([ix], sender.pubkey(), recent_blockhash)
+        
         tx = Transaction(
             from_keypairs=[sender],
             message=msg,
-            recent_blockhash=blockhash
+            recent_blockhash=recent_blockhash
         )
 
-     # Change this:
-# return solana_devnet.send_transaction(tx)
-
-        # To this:
-        response = solana_devnet.send_transaction(tx)
-        return response.value  # Returns the transaction signature (ID) 
+        # 5. Send the transaction
+        response = solana_client.send_transaction(tx)
+        
+        # Return the transaction signature (ID) as a string
+        return str(response.value) 
 
     except Exception as e:
         logger.error(f"send_sol error: {e}")

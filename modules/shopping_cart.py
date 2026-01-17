@@ -260,6 +260,12 @@ async def view_cart(update, context):
         reply_markup=InlineKeyboardMarkup(rows)
     )
 
+# This is related to solana payment
+
+def get_cart(user_id):
+    """Retrieves the cart for a specific user from storage"""
+    from modules import storage
+    return storage.get_cart(user_id)
 
 # ------------------------------------------
 # CLEAR ALL

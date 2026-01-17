@@ -6,6 +6,9 @@ from modules import inventory
 from typing import Optional, Tuple, Dict
 
 
+# Initialize the global dictionary to store user carts
+CART_FILE = "cart.json"
+
 def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
     if parent:
@@ -100,6 +103,22 @@ def update_balance(user_id: int, delta: float):
     new_bal = get_balance(user_id) + float(delta)
     set_balance(user_id, max(0, new_bal))
 
+def get_cart(user_id):
+    """
+    Retrieves the cart for a specific user directly from the 
+    JSON file managed by shopping_cart.py
+    """
+    if not os.path.exists(CART_FILE):
+        return {}
+    
+    try:
+        with open(CART_FILE, "r", encoding="utf-8") as f:
+            full_db = json.load(f)
+            # shopping_cart.py saves IDs as strings in JSON
+            return full_db.get(str(user_id), {})
+    except Exception as e:
+        print(f"Error loading cart in storage: {e}")
+        return {}
 # =========================================================
 # ORDERS & DISPUTES
 # =========================================================
@@ -157,6 +176,7 @@ def toggle_product_visibility(sku: str):
                 return True
     return False
 
+
 # =========================================================
 # SELLER PRODUCTS
 # =========================================================
@@ -193,12 +213,19 @@ def add_seller_product(
     return sku
 
 def get_seller_product_by_sku(sku: str) -> Optional[Tuple[str, Dict]]:
+    # 1. Check Built-in Products first (From shopping_cart)
+    from modules.shopping_cart import BUILTIN_PRODUCTS
+    if sku in BUILTIN_PRODUCTS:
+        prod = BUILTIN_PRODUCTS[sku]
+        return str(prod["seller_id"]), prod
 
+    # 2. If not found, check the Seller Products File
     data = load_json(SELLER_PRODUCTS_FILE)
     for sid, items in data.items():
         for it in items:
             if it.get("sku") == sku:
                 return sid, it
+                
     return None, None
 
 

@@ -446,18 +446,19 @@ async def on_buy(update, context, sku, qty):
     total = float(item["price"]) * qty
 
     # FORMAT: pay_native:provider:amount:sku
-    # This matches the router in bot.py
+    # Fixed syntax: added comma after Solana button and removed extra parentheses
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:{sku}")],
         [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:{sku}")],
-        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total}:{sku}")],
+        [InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:{sku}")],
+        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:{sku}")],
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")], 
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
 
     txt = (
         f"{item.get('emoji')} *{item['name']}*\n"
-        f"Qty: *{qty}*\nTotal: *SGD {total:.2f}*" # Matching your Stripe dashboard currency
+        f"Qty: *{qty}*\nTotal: *SGD {total:.2f}*" 
     )
 
     await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
