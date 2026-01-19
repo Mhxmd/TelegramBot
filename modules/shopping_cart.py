@@ -120,7 +120,7 @@ async def add_item(update, context, sku):
 
 
 # ------------------------------------------
-# MINI PANEL SUPPORT
+# MINI PANEL 
 # ------------------------------------------
 def _is_mini_panel(text):
     return text and "Added to cart!" in text
@@ -139,7 +139,10 @@ async def show_add_to_cart_feedback(update, context, sku):
         return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
 
     qty = item["qty"]
+    price = float(item["price"])
+    subtotal = price * qty
 
+    # UI Buttons
     kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
@@ -150,11 +153,19 @@ async def show_add_to_cart_feedback(update, context, sku):
         [InlineKeyboardButton("🏠 Back", callback_data="menu:shop")]
     ])
 
+    # Mini Panel Text
+    text = (
+        f"✔ *Added to cart!* {item['name']}\n"
+        f"Qty: *{qty}*\n"
+        f"💵 Price: `${price:.2f}` × {qty} = *${subtotal:.2f}*"
+    )
+
     return await q.edit_message_text(
-        f"✔ *Added to cart!* {item['name']}\nQty: *{qty}*",
+        text,
         parse_mode="Markdown",
         reply_markup=kb
     )
+
 
 
 # ------------------------------------------
