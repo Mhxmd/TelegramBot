@@ -322,6 +322,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await shopping_cart.show_add_to_cart_feedback(update, context, sku, source)
 
 
+        if data.startswith("cart:remove:"):
+            sku = data.split(":")[2]
+            shopping_cart.remove_from_cart(uid, sku)
+            return await shopping_cart.view_cart(update, context)
+
+        
         if data.startswith("cart:subqty:"):
             _, _, sku = data.split(":")
             return await shopping_cart.change_quantity(update, context, sku, -1)
@@ -334,6 +340,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, _, sku = data.split(":")
             return await shopping_cart.remove_item(update, context, sku)
         
+        # EDIT ITEM → OPEN MINI PANEL
+        if data.startswith("cart:edit:"):
+            parts = data.split(":")
+            sku = parts[2]
+            source = parts[3] if len(parts) > 3 else "cart"
+            context.user_data["mini_source"] = source
+            return await shopping_cart.show_add_to_cart_feedback(update, context, sku, source)
+
+ 
         if data == "cart:clear_all":
             return await shopping_cart.clear_all(update, context)
        
