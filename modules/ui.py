@@ -308,7 +308,8 @@ def build_shop_keyboard(uid=None, page=0):
         # We use .ljust() or short strings to keep them from stacking
         rows.append([
             InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}"),
-            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
+            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+
         ])
 
     # Navigation & Footer
@@ -333,20 +334,29 @@ def build_shop_keyboard(uid=None, page=0):
     return header + "\n\n".join(display_lines), InlineKeyboardMarkup(rows)
 
 # ==========================================
-# View Item Details Screen
+# View Item Details Screen (Updated with Add-to-Cart qty)
 # ==========================================
 
 async def view_item_details(update, context, sku):
+    from modules import shopping_cart  # ensure import inside function to avoid circular imports
+
     q = update.callback_query
     item = get_any_product_by_sku(sku)
     
     if not item:
         return await q.answer("Item not found.", show_alert=True)
 
+    uid = update.effective_user.id
+    user_cart = shopping_cart.get_user_cart(uid)
+    current_qty = user_cart.get(sku, {}).get("qty", 0)
+
+    # Dynamic Add-to-Cart label
+    add_label = "🛒 Add to Cart" if current_qty == 0 else f"🛒 Add to Cart ({current_qty})"
+
     seller_id = item.get("seller_id", 0)
     seller_label = "System Admin" if seller_id == 0 else f"User {seller_id}"
-    
-    # FIX: Ensure this string is assigned (=), not appended (+=) inside a loop
+
+    # Item description
     text = (
         f"{item.get('emoji','📦')} **{item['name']}**\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -356,15 +366,16 @@ async def view_item_details(update, context, sku):
         f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
     )
 
+    # Buttons including dynamic cart qty
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🛒 Add to Cart", callback_data=f"cart:add:{sku}"),
+            InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
             InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
         ],
         [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
     ])
 
-    # Smooth transition: Delete old menu and send new photo card
+    # If image exists → send photo card
     if item.get("image_url"):
         await q.message.delete()
         return await context.bot.send_photo(
@@ -375,7 +386,9 @@ async def view_item_details(update, context, sku):
             reply_markup=kb
         )
     
+    # Otherwise → edit text normally
     await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+
 # ==========================================
 # STRIPE — CART CHECKOUT
 # ==========================================

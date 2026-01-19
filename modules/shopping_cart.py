@@ -126,9 +126,13 @@ def _is_mini_panel(text):
     return text and "Added to cart!" in text
 
 
-async def show_add_to_cart_feedback(update, context, sku):
+async def show_add_to_cart_feedback(update, context, sku, source="shop"):
+
     q = update.callback_query
     uid = update.effective_user.id
+    
+    context.user_data["mini_source"] = source
+
 
     cart = get_user_cart(uid)
     item = cart.get(sku)
@@ -150,7 +154,10 @@ async def show_add_to_cart_feedback(update, context, sku):
             InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}"),
         ],
         [InlineKeyboardButton("🛒 Go to Cart", callback_data="cart:view")],
-        [InlineKeyboardButton("🏠 Back", callback_data="menu:shop")]
+        [InlineKeyboardButton(
+            "🔙 Back",
+                    callback_data="menu:shop" if source == "shop" else f"view_item:{sku}" )]
+
     ])
 
     # Mini Panel Text
@@ -181,26 +188,42 @@ async def change_quantity(update, context, sku, delta):
 
     new_qty = cart[sku]["qty"] + delta
 
-    # if quantity hits zero
+    # ------------------------------------------------------
+    # CASE 1: QUANTITY DROPPED TO ZERO → ITEM REMOVED
+    # ------------------------------------------------------
     if new_qty <= 0:
         remove_from_cart(uid, sku)
 
-        # mini panel → return to shop
+        # Are we inside the mini panel?
         if _is_mini_panel(q.message.text or ""):
+            source = context.user_data.get("mini_source", "shop")
+
+            # If mini panel came from VIEW ITEM
+            if source == "view":
+                from modules import ui
+                return await ui.view_item_details(update, context, sku)
+
+            # If mini panel came from MARKETPLACE
             from modules import ui
             txt, kb = ui.build_shop_keyboard(uid)
             return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
 
+        # Not in mini panel → normal cart return
         return await view_cart(update, context)
 
-    # normal update
+    # ------------------------------------------------------
+    # CASE 2: NORMAL QUANTITY UPDATE
+    # ------------------------------------------------------
     update_quantity(uid, sku, new_qty)
 
-    # update inside mini panel
+    # Inside mini panel → refresh mini panel (NOT view cart)
     if _is_mini_panel(q.message.text or ""):
-        return await show_add_to_cart_feedback(update, context, sku)
+        source = context.user_data.get("mini_source", "shop")
+        return await show_add_to_cart_feedback(update, context, sku, source=source)
 
+    # Not mini panel → update cart normally
     return await view_cart(update, context)
+
 
 
 # ------------------------------------------
