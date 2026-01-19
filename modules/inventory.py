@@ -1,9 +1,9 @@
-# inventory.py — FINAL
+# inventory.py — FINAL (UPDATED)
 
 from __future__ import annotations
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 from modules import storage
 
 _LOCK_PATH = os.path.join(os.path.dirname(__file__), "seller_products.lock")
@@ -41,15 +41,22 @@ class FileLock:
         except Exception:
             pass
 
-    def __enter__(self): self.acquire(); return self
-    def __exit__(self, *_): self.release()
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_):
+        self.release()
 
 # -------------------------
 # Helpers
 # -------------------------
 
-def _load(): return storage.load_json(storage.SELLER_PRODUCTS_FILE)
-def _save(d): storage.save_json(storage.SELLER_PRODUCTS_FILE, d)
+def _load():
+    return storage.load_json(storage.SELLER_PRODUCTS_FILE)
+
+def _save(d):
+    storage.save_json(storage.SELLER_PRODUCTS_FILE, d)
 
 def _find_product_mut(data, sku):
     for items in data.values():
@@ -75,11 +82,44 @@ def _patch_order(order_id, patch):
     return True
 
 # -------------------------
+# Variations
+# -------------------------
+
+def split_sku_variant(sku: Any):
+    # Always return a string base (never None)
+    if sku is None:
+        return "", None
+
+    if not isinstance(sku, str):
+        sku = str(sku)
+
+    sku = sku.strip()
+    if not sku or sku.lower() == "none":
+        return "", None
+
+    if "|" in sku:
+        base, var = sku.split("|", 1)
+        return base.strip(), var.strip()
+    return sku, None
+
+def _find_variant_mut(p, var_id):
+    for v in p.get("variations", []):
+        if str(v.get("id")) == str(var_id):
+            v.setdefault("stock", 0)
+            v.setdefault("reserved", 0)
+            v.setdefault("price_delta", 0)
+            return v
+    return None
+
+# -------------------------
 # Availability
 # -------------------------
 
 def get_available_stock(sku: str) -> Optional[int]:
     base, var = split_sku_variant(sku)
+    if not base:
+        return None
+
     data = _load()
     p = _find_product_mut(data, base)
     if not p:
@@ -91,16 +131,22 @@ def get_available_stock(sku: str) -> Optional[int]:
         v = _find_variant_mut(p, var)
         if not v:
             return 0
-        return max(0, v["stock"] - v["reserved"])
+        return max(0, int(v["stock"]) - int(v["reserved"]))
 
-    return max(0, p["stock"] - p["reserved"])
+    return max(0, int(p["stock"]) - int(p["reserved"]))
 
 def check_available(sku: str, qty: int):
+    # Contract: returns (bool, int)
     qty = max(1, int(qty))
     avail = get_available_stock(sku)
-    if avail is None or avail >= qty:
-        return True, "ok"
-    return False, f"Out of stock. Available: {avail}"
+
+    if avail is None:
+        return False, 0
+
+    if avail >= qty:
+        return True, int(avail)
+
+    return False, int(avail)
 
 check_stock = check_available  # backward compatibility
 
@@ -109,29 +155,39 @@ check_stock = check_available  # backward compatibility
 # -------------------------
 
 def reserve_for_payment(order_id: str, sku: str, qty: int):
-    sku = str(sku)
+    sku = str(sku).strip()
     qty = max(1, int(qty))
+
+    # Hard guard
+    if not sku or sku.lower() == "none":
+        _patch_order(order_id, {"sku": sku, "inv_reserved": False})
+        return False, "Invalid SKU"
+
     base, var = split_sku_variant(sku)
+    if not base:
+        _patch_order(order_id, {"sku": sku, "inv_reserved": False})
+        return False, "Invalid SKU"
 
     with FileLock(_LOCK_PATH):
         data = _load()
         p = _find_product_mut(data, base)
 
+        # Missing product should fail, not succeed
         if not p:
             _patch_order(order_id, {"sku": sku, "inv_reserved": False})
-            return True, "ok"
+            return False, "Product not found"
 
         _ensure_fields(p)
 
         if var:
             v = _find_variant_mut(p, var)
-            if not v or v["stock"] - v["reserved"] < qty:
+            if (not v) or (int(v["stock"]) - int(v["reserved"]) < qty):
                 return False, "Out of stock"
-            v["reserved"] += qty
+            v["reserved"] = int(v["reserved"]) + qty
         else:
-            if p["stock"] - p["reserved"] < qty:
+            if int(p["stock"]) - int(p["reserved"]) < qty:
                 return False, "Out of stock"
-            p["reserved"] += qty
+            p["reserved"] = int(p["reserved"]) + qty
 
         _save(data)
 
@@ -155,28 +211,35 @@ def confirm_payment(order_id: str):
         return False, "Order not found"
 
     sku = o.get("sku")
+
+    # Hard guard
+    if not sku or str(sku).strip().lower() == "none":
+        return False, "Invalid SKU"
+
     qty = int(o.get("inv_qty", 1))
     base, var = split_sku_variant(sku)
+    if not base:
+        return False, "Invalid SKU"
 
     with FileLock(_LOCK_PATH):
         data = _load()
         p = _find_product_mut(data, base)
         if not p:
-            return True, "ok"
+            return False, "Product not found"
 
         _ensure_fields(p)
 
         if var:
             v = _find_variant_mut(p, var)
-            if not v or v["reserved"] < qty:
+            if not v or int(v["reserved"]) < qty:
                 return False, "Reservation missing"
-            v["reserved"] -= qty
-            v["stock"] -= qty
+            v["reserved"] = int(v["reserved"]) - qty
+            v["stock"] = int(v["stock"]) - qty
         else:
-            if p["reserved"] < qty:
+            if int(p["reserved"]) < qty:
                 return False, "Reservation missing"
-            p["reserved"] -= qty
-            p["stock"] -= qty
+            p["reserved"] = int(p["reserved"]) - qty
+            p["stock"] = int(p["stock"]) - qty
 
         _save(data)
 
@@ -193,8 +256,7 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
         return False, "Order not found"
 
     sku = o.get("sku")
-    
-    # NEW SAFETY CHECK:
+
     # If there's no SKU, or it's a Cart purchase, skip inventory logic
     if not sku or str(sku).startswith("cart_"):
         _patch_order(order_id, {"inv_reason": "skipped_no_sku"})
@@ -202,6 +264,9 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
 
     qty = int(o.get("inv_qty", 1))
     base, var = split_sku_variant(sku)
+    if not base:
+        _patch_order(order_id, {"inv_reason": "skipped_invalid_sku"})
+        return True, "ok"
 
     with FileLock(_LOCK_PATH):
         data = _load()
@@ -214,38 +279,15 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
         if var:
             v = _find_variant_mut(p, var)
             if v:
-                v["reserved"] = max(0, v["reserved"] - qty)
+                v["reserved"] = max(0, int(v["reserved"]) - qty)
                 if o.get("inv_deducted"):
-                    v["stock"] += qty
+                    v["stock"] = int(v["stock"]) + qty
         else:
-            p["reserved"] = max(0, p["reserved"] - qty)
+            p["reserved"] = max(0, int(p["reserved"]) - qty)
             if o.get("inv_deducted"):
-                p["stock"] += qty
+                p["stock"] = int(p["stock"]) + qty
 
         _save(data)
 
     _patch_order(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
     return True, "ok"
-
-# -------------------------
-# Variations
-# -------------------------
-
-def split_sku_variant(sku: Any):
-    # Safety Check: If sku is None or not a string, return immediately
-    if not sku or not isinstance(sku, str):
-        return None, None
-        
-    if "|" in sku:
-        base, var = sku.split("|", 1)
-        return base.strip(), var.strip()
-    return sku.strip(), None
-
-def _find_variant_mut(p, var_id):
-    for v in p.get("variations", []):
-        if str(v.get("id")) == var_id:
-            v.setdefault("stock", 0)
-            v.setdefault("reserved", 0)
-            v.setdefault("price_delta", 0)
-            return v
-    return None
