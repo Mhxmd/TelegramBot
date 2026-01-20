@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFi
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from typing import Optional
-from modules import shopping_cart, storage, inventory
+from modules import shopping_cart, storage, inventory, wallet_utils
 import stripe
 import logging
 logger = logging.getLogger(__name__)
@@ -59,13 +59,22 @@ CATALOG = {
 # ==========================================
 def enumerate_all_products():
     items = []
-    for sku, p in CATALOG.items():
-        items.append({**p, "sku": sku})
+    seen_skus = set()
 
+    # 1. Load dynamic seller products first
     data = storage.load_json(storage.SELLER_PRODUCTS_FILE)
     for _, plist in data.items():
         for it in plist:
-            items.append(it)
+            sku = it.get("sku")
+            if sku not in seen_skus:
+                items.append(it)
+                seen_skus.add(sku)
+
+    # 2. Add static items ONLY if the SKU hasn't been seen yet
+    for sku, p in CATALOG.items():
+        if sku not in seen_skus:
+            items.append({**p, "sku": sku})
+            seen_skus.add(sku)
 
     return items
 
