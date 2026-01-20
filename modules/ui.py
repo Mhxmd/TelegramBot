@@ -1,14 +1,13 @@
-
-
 import os
 import qrcode
 import re
 from io import BytesIO
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, LabeledPrice
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from typing import Optional
+from modules import shopping_cart, storage, inventory
 import stripe
 import logging
 logger = logging.getLogger(__name__)
@@ -392,59 +391,48 @@ async def view_item_details(update, context, sku):
 # ==========================================
 # STRIPE — CART CHECKOUT
 # ==========================================
-async def stripe_cart_checkout(update, context, total):
-    import requests, time
+async def stripe_cart_checkout(update, context, total_str):
     q = update.callback_query
     uid = update.effective_user.id
-    
-    # Check if we are in a cart flow or single item flow
-    is_cart = "Cart" in (q.data or "")
-    order_id = f"{'cart' if is_cart else 'sku'}_{uid}_{int(time.time())}"
-    
-    await q.answer("Connecting to Stripe...")
 
-    try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-        if not SERVER_BASE:
-            return await q.edit_message_text("❌ SERVER_BASE_URL not set in .env")
+    cart = shopping_cart.get_user_cart(uid)
+    if not cart:
+        return await q.answer("Cart is empty.", show_alert=True)
 
-        res = requests.post(
-            f"{SERVER_BASE}/create_checkout_session",
-            json={
-                "order_id": order_id,
-                "amount": float(total),
-                "user_id": uid
-            },
-            timeout=15
-        )
-        
-        # If this fails with 404, it means server.py isn't handling this URL correctly
-        res.raise_for_status() 
-        
-        data = res.json()
-        checkout_url = data["checkout_url"]
+    # Build items list
+    items = [{"sku": sku, "qty": int(item.get("qty", 1) or 1)} for sku, item in cart.items()]
 
-        storage.add_order(uid, "Stripe Purchase", 1, float(total), "Stripe", 0)
+    # Create order first
+    order_id = storage.add_order(
+        buyer_id=uid,
+        item_name="Cart",
+        qty=sum(i["qty"] for i in items),
+        amount=float(total_str),
+        method="stripe_cart",
+        seller_id=0
+    )
 
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 Pay Securely Now", url=checkout_url)],
-            [InlineKeyboardButton("🔙 Back", callback_data="cart:view" if is_cart else "menu:shop")],
-        ])
+    ok, msg = inventory.reserve_cart_for_payment(order_id, items)
+    if not ok:
+        storage.update_order_status(order_id, "failed", reason=msg)
+        return await q.answer(f"❌ {msg}", show_alert=True)
 
-        await q.edit_message_text(
-            f"🧾 *Secure Checkout*\n\nTotal: *SGD {float(total):.2f}*\n\n"
-            "Click below to pay via our secure Stripe portal.",
-            reply_markup=kb,
-            parse_mode="Markdown",
-        )
+    # Send invoice with cart payload
+    provider_token = os.getenv("PROVIDER_TOKEN_STRIPE")
+    price_in_cents = int(float(total_str) * 100)
 
-    except requests.exceptions.HTTPError as e:
-        # This will specifically tell you if it's a 404 (wrong URL) or 500 (server crash)
-        print(f"Server Error: {e}") 
-        return await q.edit_message_text(f"❌ Payment Server Error ({res.status_code}). Please check if server.py is running.")
-    except Exception as e:
-        print(f"General Error: {e}")
-        return await q.edit_message_text(f"❌ Connection Failed: {e}")
+    await context.bot.send_invoice(
+        chat_id=uid,
+        title="Order: Cart",
+        description="Checkout your cart",
+        payload=f"PAYCART|{order_id}",
+        provider_token=provider_token,
+        currency="SGD",
+        prices=[LabeledPrice("Total Price", price_in_cents)],
+        start_parameter="market-cart-checkout"
+    )
+    return await q.answer()
+
 # ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
@@ -461,7 +449,7 @@ async def on_buy(update, context, sku, qty):
     # FORMAT: pay_native:provider:amount:sku
     # Fixed syntax: added comma after Solana button and removed extra parentheses
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:{sku}")],
+        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:{sku}:{qty}")],
         [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:{sku}")],
         [InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:{sku}")],
         [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:{sku}")],
@@ -608,77 +596,110 @@ async def handle_start_deep_link(update: Update, context: ContextTypes.DEFAULT_T
             )
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh Orders", callback_data="menu:orders")]])
 
-        await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+        ok, msg = inventory.confirm_payment(order_id)
+        if not ok:
+            await update.message.reply_text(f"⚠️ Inventory confirm failed: {msg}", parse_mode="Markdown")
 
 # ==========================================
 # STRIPE — SINGLE ITEM
 # ==========================================
 async def create_stripe_checkout(update, context, sku, qty):
-    """
-    Switched from external Flask server to Native Telegram Invoice.
-    This fixes the 404 error by bypassing the ngrok /create_checkout_session URL.
-    """
     q = update.callback_query
     item = get_any_product_by_sku(sku)
-    
+
     if not item:
         return await q.answer("❌ Item no longer available.", show_alert=True)
 
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
-    
-    # Get the live Stripe token from environment
+
     stripe_token = os.getenv("PROVIDER_TOKEN_STRIPE")
-    
     if not stripe_token:
         return await q.answer("❌ Stripe is currently unavailable (Token missing).", show_alert=True)
 
     try:
-        # Convert to cents for Stripe/Telegram
         price_in_cents = int(total * 100)
-        
-        # 1. Add record to your database
-        storage.add_order(user_id, item["name"], qty, total, "Stripe", int(item.get("seller_id", 0)))
 
-        # 2. Send the native Telegram invoice
+        # 1) Create order and get real order_id
+        order_id = storage.add_order(
+            buyer_id=user_id,
+            item_name=item["name"],
+            qty=qty,
+            amount=total,
+            method="Stripe",
+            seller_id=int(item.get("seller_id", 0)),
+        )
+
+        # 2) Reserve inventory before sending invoice
+        ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
+        if not ok:
+            storage.update_order_status(order_id, "failed", reason=msg)
+            return await q.answer(f"❌ {msg}", show_alert=True)
+
+        # 3) Put order_id into invoice payload
+        payload = f"PAY|{order_id}|{sku}|{qty}"
+
         await context.bot.send_invoice(
             chat_id=user_id,
             title=f"Buy {item['name']}",
             description=f"Quantity: {qty} | Secure checkout via Stripe",
-            payload=f"PAY|{user_id}|{sku}",
+            payload=payload,
             provider_token=stripe_token,
-            currency="SGD", # Matches your dashboard currency
+            currency="SGD",
             prices=[LabeledPrice(f"{item['name']} x{qty}", price_in_cents)],
-            start_parameter="stripe-purchase"
+            start_parameter="stripe-purchase",
         )
-        
-        # Close the callback query to stop the loading spinner
+
         await q.answer()
-        
+
     except Exception as e:
         logger.error(f"Stripe Native Error: {e}")
         await q.edit_message_text(f"❌ Could not initialize Stripe: {e}")
 
-#HitPay Checkout - Single Item
+# ==========================================
+# HitPay Checkout - Single Item
+# ==========================================                                                                  
 
 async def create_hitpay_checkout(update, context, sku, qty):
-    import requests, time
+    import requests
 
     q = update.callback_query
     item = get_any_product_by_sku(sku)
+    if not item:
+        return await q.answer("❌ Item no longer available.", show_alert=True)
+
     qty = clamp_qty(qty)
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
-    order_id = f"ord_{user_id}_{int(time.time())}"
+
+    # 1) Create order first and use its id everywhere
+    order_id = storage.add_order(
+        buyer_id=user_id,
+        item_name=item["name"],
+        qty=qty,
+        amount=total,
+        method="HitPay",
+        seller_id=int(item.get("seller_id", 0)),
+    )
+
+    # 2) Reserve stock now
+    ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
+    if not ok:
+        storage.update_order_status(order_id, "failed", reason=msg)
+        return await q.answer(f"❌ {msg}", show_alert=True)
 
     try:
         SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        if not SERVER_BASE:
+            inventory.release_on_failure_or_refund(order_id, reason="missing_server_base")
+            storage.update_order_status(order_id, "failed", reason="SERVER_BASE_URL missing")
+            return await q.edit_message_text("❌ SERVER_BASE_URL not set in .env")
 
         res = requests.post(
             f"{SERVER_BASE}/hitpay/create_payment",
             json={
-                "order_id": order_id,
+                "order_id": order_id,          # IMPORTANT
                 "amount": total,
                 "user_id": user_id,
                 "description": item["name"],
@@ -692,18 +713,10 @@ async def create_hitpay_checkout(update, context, sku, qty):
         if not payment_url:
             raise Exception(f"Invalid HitPay response: {data}")
 
-
     except Exception as e:
+        inventory.release_on_failure_or_refund(order_id, reason=f"hitpay_create_failed:{e}")
+        storage.update_order_status(order_id, "failed", reason=str(e))
         return await q.edit_message_text(f"❌ HitPay error: {e}")
-
-    storage.add_order(
-        user_id,
-        item["name"],
-        qty,
-        total,
-        "HitPay",
-        int(item.get("seller_id", 0)),
-    )
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇸🇬 Pay with PayNow", url=payment_url)],
@@ -711,26 +724,47 @@ async def create_hitpay_checkout(update, context, sku, qty):
     ])
 
     await q.edit_message_text(
-        f"*HitPay Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}",
+        f"*HitPay Checkout*\nItem: {item['name']}\nQty: {qty}\nTotal: ${total:.2f}\n\nOrder: `{order_id}`",
         reply_markup=kb,
         parse_mode="Markdown",
     )
 
-#HitPay Checkout - Cart
+
+# ==========================================
+# HITPAY CHECKOUT - CART
+# ==========================================
 
 async def create_hitpay_cart_checkout(update, context, total):
-    import requests, time
+    import requests
+
     q = update.callback_query
     user_id = update.effective_user.id
-    order_id = f"cart_{user_id}_{int(time.time())}"
+    total = float(total)
+
+    # 1) Create a cart order first (single order_id)
+    order_id = storage.add_order(
+        buyer_id=user_id,
+        item_name="Cart Items",
+        qty=1,
+        amount=total,
+        method="HitPay",
+        seller_id=0,
+    )
+
+    # Optional: reserve each cart item here if your cart uses real SKUs.
+    # If your cart is mixed or you haven’t built per-item reservation yet, skip for now.
 
     try:
         SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        if not SERVER_BASE:
+            storage.update_order_status(order_id, "failed", reason="SERVER_BASE_URL missing")
+            return await q.edit_message_text("❌ SERVER_BASE_URL not set in .env")
+
         res = requests.post(
             f"{SERVER_BASE}/hitpay/create_payment",
             json={
-                "order_id": order_id,
-                "amount": float(total),
+                "order_id": order_id,          # IMPORTANT
+                "amount": total,
                 "user_id": user_id,
                 "description": "Cart Checkout",
             },
@@ -738,13 +772,14 @@ async def create_hitpay_cart_checkout(update, context, total):
         )
         res.raise_for_status()
         data = res.json()
-        # Use checkout_url to match your server logic
-        payment_url = data.get("checkout_url") or data.get("payment_url") 
+        payment_url = data.get("checkout_url") or data.get("payment_url")
+
+        if not payment_url:
+            raise Exception(f"Invalid HitPay response: {data}")
 
     except Exception as e:
+        storage.update_order_status(order_id, "failed", reason=str(e))
         return await q.edit_message_text(f"❌ HitPay error: {e}")
-
-    storage.add_order(user_id, "Cart Items", 1, float(total), "HitPay", 0)
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🇸🇬 Pay with HitPay", url=payment_url)],
@@ -752,12 +787,10 @@ async def create_hitpay_cart_checkout(update, context, total):
     ])
 
     await q.edit_message_text(
-        f"*HitPay Cart Checkout*\nTotal: ${float(total):.2f}",
+        f"*HitPay Cart Checkout*\nTotal: ${total:.2f}\n\nOrder: `{order_id}`",
         reply_markup=kb,
         parse_mode="Markdown",
     )
-
-
 
 
 # ==========================================

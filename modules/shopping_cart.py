@@ -5,9 +5,11 @@
 import json
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from modules import storage
 
-CART_FILE = "cart.json"
-SELLER_PRODUCTS_FILE = "seller_products.json"
+CART_FILE = storage.CART_FILE
+SELLER_PRODUCTS_FILE = storage.SELLER_PRODUCTS_FILE
+
 
 # ------------------------------------------
 # BUILT-IN PRODUCTS
@@ -22,7 +24,7 @@ def load_all_products():
     products = dict(BUILTIN_PRODUCTS)
     if os.path.exists(SELLER_PRODUCTS_FILE):
         try:
-            with open(SELLER_PRODUCTS_FILE, "r") as f:
+            with open(SELLER_PRODUCTS_FILE, "r", encoding="utf-8") as f:
                 seller_data = json.load(f)
                 for seller_id, items in seller_data.items():
                     for it in items:
@@ -43,14 +45,15 @@ def load_cart():
     if not os.path.exists(CART_FILE):
         return {}
     try:
-        with open(CART_FILE, "r") as f:
+        with open(CART_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except:
         return {}
 
 def save_cart(data):
-    with open(CART_FILE, "w") as f:
+    os.makedirs(os.path.dirname(CART_FILE), exist_ok=True)
+    with open(CART_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 def get_user_cart(uid):
@@ -204,7 +207,7 @@ async def change_quantity(update, context, sku, delta):
         if _is_mini_panel(q.message.text or ""):
 
             if source == "cart":
-                 await view_cart(update, context)
+                return await view_cart(update, context)
 
             if source == "view":
                 from modules import ui
@@ -272,7 +275,7 @@ async def view_cart(update, context):
         subtotal = price * qty
         total += subtotal
         
-         # Build pretty text for the big product button
+        # Build pretty text for the big product button
         btn_text = f"{emoji} {name} — {qty} × ${price:.2f} = ${subtotal:.2f}"
 
         # Store where mini-panel should return
@@ -296,13 +299,10 @@ async def view_cart(update, context):
     # ------------------------------
     # PAYMENT OPTIONS
     # ------------------------------
-    rows.append([InlineKeyboardButton("💳 Pay via Stripe (Cart)", callback_data=f"pay_native:stripe:{total:.2f}:Cart")])
+    rows.append([InlineKeyboardButton("💳 Pay via Stripe (Cart)", callback_data=f"stripe_cart:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🇸🇬 PayNow (Cart)", callback_data=f"paynow_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}")])
-    rows.append([
-        InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total:.2f}:Cart"),
-        InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:Cart")
-    ])
+    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart")])
 
     # ------------------------------
     # CLEAR + MENU
@@ -322,9 +322,8 @@ async def view_cart(update, context):
 # This is related to solana payment
 
 def get_cart(user_id):
-    """Retrieves the cart for a specific user from storage"""
-    from modules import storage
-    return storage.get_cart(user_id)
+    """Cart dict for solana/cart flows: {sku: {..item..}}"""
+    return get_user_cart(user_id)
 
 # ------------------------------------------
 # CLEAR ALL

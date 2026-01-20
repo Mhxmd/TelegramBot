@@ -53,7 +53,7 @@ stripe.api_key = STRIPE_SECRET_KEY
 # ============================================================
 # 📂 FILES
 # ============================================================
-ORDERS_FILE = BASE_DIR / "orders.json"
+ORDERS_FILE = BASE_DIR / "data" / "orders.json"
 
 # ============================================================
 # 🚀 APP INIT
@@ -67,11 +67,13 @@ log = logging.getLogger("server")
 # 🧠 JSON HELPERS
 # ============================================================
 def load_json(path: pathlib.Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text("{}")
     return json.loads(path.read_text())
 
 def save_json(path: pathlib.Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
 
 # ============================================================

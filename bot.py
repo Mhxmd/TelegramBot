@@ -59,73 +59,177 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================
 # NATIVE PAYMENT HANDLERS
 # ==========================
+def _load_orders():
+    return storage.load_json(storage.ORDERS_FILE)
 
-async def handle_native_payment(update, context):
+def _save_orders(d):
+    storage.save_json(storage.ORDERS_FILE, d)
+
+def _patch_order_meta(order_id: str, patch: dict):
+    orders = _load_orders()
+    if order_id not in orders:
+        return False
+    orders[order_id].update(patch)
+    _save_orders(orders)
+    return True
+
+async def handle_stripe_cart_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE, total_str: str):
+    """
+    Creates:
+    - 1 cart order (parent) with item_name="Cart"
+    - many item orders (child), 1 per SKU in cart
+    Reserves inventory for each child order.
+    Sends 1 Telegram invoice with payload PAYCART|<cart_order_id>
+    """
     query = update.callback_query
-    data = query.data.split(":")
-    
-    # pay_native : provider : amount : (optional sku)
-    provider = data[1]
-    amount_str = data[2]
-    sku = data[3] if len(data) > 3 else "Multiple Items (Cart)"
-    
-    amount_in_cents = int(float(amount_str) * 100)
-    token = PROVIDER_TOKEN_SMART_GLOCAL if provider == "smart_glocal" else PROVIDER_TOKEN_REDSYS
-    
-    await context.bot.send_invoice(
-        chat_id=update.effective_user.id,
-        title=f"Purchase: {sku}",
-        description=f"Direct payment via {provider.title()}",
-        payload=f"PAY-{sku}-{update.effective_user.id}",
-        provider_token=token,
-        currency="USD",
-        prices=[LabeledPrice("Price", amount_in_cents)],
-        start_parameter="market-purchase"
+    user_id = update.effective_user.id
+
+    # Provider token for Telegram Payments (Stripe)
+    token = os.getenv("PROVIDER_TOKEN_STRIPE")
+    if not token:
+        return await query.answer("❌ Stripe provider token missing in .env", show_alert=True)
+
+    cart = shopping_cart.get_cart(user_id)  # {sku: {qty, price, name, ...}}
+    if not cart:
+        return await query.answer("❌ Your cart is empty.", show_alert=True)
+
+    try:
+        total = float(total_str)
+    except:
+        return await query.answer("❌ Invalid cart total.", show_alert=True)
+
+    # Create parent cart order
+    cart_order_id = storage.add_order(
+        buyer_id=user_id,
+        item_name="Cart",
+        qty=sum(int(it.get("qty", 1)) for it in cart.values()),
+        amount=float(total),
+        method="stripe_cart",
+        seller_id=0
     )
-    await query.answer()
+
+    child_order_ids = []
+    reserved_child_ids = []
+
+    # Create child orders + reserve each item
+    try:
+        for sku, item in cart.items():
+            qty = int(item.get("qty", 1))
+            price = float(item.get("price", 0.0))
+            amount = price * qty
+
+            seller_id = 0
+            sid, prod = storage.get_seller_product_by_sku(sku)
+            if prod:
+                seller_id = int(prod.get("seller_id", 0))
+
+            child_id = storage.add_order(
+                buyer_id=user_id,
+                item_name=str(sku),
+                qty=qty,
+                amount=float(amount),
+                method="stripe_cart_item",
+                seller_id=seller_id
+            )
+            child_order_ids.append(child_id)
+
+            ok, msg = inventory.reserve_for_payment(child_id, str(sku), qty)
+            if not ok:
+                storage.update_order_status(child_id, "failed", reason=msg)
+                raise RuntimeError(f"{sku}: {msg}")
+
+            reserved_child_ids.append(child_id)
+
+        # Attach children to parent cart order
+        _patch_order_meta(cart_order_id, {"cart_child_orders": child_order_ids})
+
+        price_in_cents = int(round(total * 100))
+
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title="Order: Cart",
+            description="Cart checkout via Stripe",
+            payload=f"PAYCART|{cart_order_id}",
+            provider_token=token,
+            currency="SGD",
+            prices=[LabeledPrice("Total Price", price_in_cents)],
+            start_parameter="market-cart-checkout"
+        )
+        await query.answer()
+
+    except Exception as e:
+        # Roll back reservations if anything fails
+        for oid in reversed(reserved_child_ids):
+            try:
+                inventory.release_on_failure_or_refund(oid, reason="cart_checkout_failed")
+            except:
+                pass
+
+        storage.update_order_status(cart_order_id, "failed", reason=str(e))
+        return await query.answer(f"❌ Cart checkout failed: {e}", show_alert=True)
 
 async def handle_native_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Unified handler for Redsys, Smart Glocal, and Stripe using .env tokens"""
+    """Single-item Telegram invoice checkout (Stripe / Nets / Smart Glocal)"""
     query = update.callback_query
     data = query.data.split(":")
-    
-    # Format expected from ui.py: pay_native:provider:amount:sku
+
+    # Expected format: pay_native:provider:amount:sku
     provider = data[1]
     amount_str = data[2]
     sku = data[3] if len(data) > 3 else "Product"
-    user_id = update.effective_user.id 
+    user_id = update.effective_user.id
 
-    # Mapping providers to Environment Variables
+    if str(sku).strip().lower() == "cart":
+        return await query.answer("Use cart checkout buttons.", show_alert=True)
+
     tokens = {
         "smart_glocal": os.getenv("PROVIDER_TOKEN_SMART_GLOCAL"),
         "redsys": os.getenv("PROVIDER_TOKEN_REDSYS"),
-        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE") # Your pk_live_... key
+        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE")
     }
-    
-    token = tokens.get(provider)
 
+    token = tokens.get(provider)
     if not token:
-        logger.error(f"Missing provider token for: {provider}")
         return await query.answer("❌ Payment provider not configured.", show_alert=True)
 
     try:
-        # Stripe and Telegram require prices in the smallest currency unit (cents)
-        price_in_cents = int(float(amount_str) * 100)
-        
+        amount = float(amount_str)
+        price_in_cents = int(round(amount * 100))
+
+        seller_id = 0
+        sid, prod = storage.get_seller_product_by_sku(sku)
+        if prod:
+            seller_id = int(prod.get("seller_id", 0))
+
+        order_id = storage.add_order(
+            buyer_id=user_id,
+            item_name=sku,
+            qty=1,
+            amount=amount,
+            method=provider,
+            seller_id=seller_id
+        )
+
+        ok, msg = inventory.reserve_for_payment(order_id, sku, 1)
+        if not ok:
+            storage.update_order_status(order_id, "failed", reason=msg)
+            return await query.answer(f"❌ {msg}", show_alert=True)
+
         await context.bot.send_invoice(
             chat_id=user_id,
             title=f"Order: {sku}",
-            description=f"Direct checkout via {provider.replace('_', ' ').title()}",
-            payload=f"PAY|{user_id}|{sku}", 
+            description=f"Checkout via {provider}",
+            payload=f"PAY|{order_id}|{sku}|1",
             provider_token=token,
-            currency="SGD",  # Set to SGD to match your Stripe Dashboard balance
+            currency="SGD",
             prices=[LabeledPrice("Total Price", price_in_cents)],
             start_parameter="market-checkout"
         )
         await query.answer()
+
     except Exception as e:
-        logger.error(f"Invoice Generation Error: {e}")
-        await query.answer("❌ Failed to create invoice. Check if provider token is valid.", show_alert=True)
+        logger.error(f"Invoice error: {e}")
+        await query.answer("❌ Failed to create invoice.", show_alert=True)
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Final check before the user enters card details. Must return ok=True to proceed."""
@@ -139,11 +243,42 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer(ok=False, error_message="Order validation failed. Please try again")
         
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Triggered after the money is actually processed"""
     uid = update.effective_user.id
-    # Clear the user's cart now that they paid
-    shopping_cart.clear_cart(uid)
-    
+    sp = update.message.successful_payment
+    payload = (sp.invoice_payload or "").strip()
+
+    if payload.startswith("PAY|"):
+        parts = payload.split("|")
+        if len(parts) >= 4 and str(parts[1]).startswith("ord_"):
+            order_id = parts[1]
+
+            ok, msg = inventory.confirm_payment(order_id)
+            if ok:
+                storage.update_order_status(order_id, "escrow_hold")
+            else:
+                inventory.release_on_failure_or_refund(order_id, reason=f"confirm_failed:{msg}")
+                storage.update_order_status(order_id, "failed", reason=msg)
+
+    elif payload.startswith("PAYCART|"):
+        parts = payload.split("|")
+        if len(parts) >= 2 and str(parts[1]).startswith("ord_"):
+            cart_order_id = parts[1]
+
+            orders = _load_orders()
+            cart_order = orders.get(cart_order_id, {})
+            child_ids = cart_order.get("cart_child_orders", []) or []
+
+            for oid in child_ids:
+                ok, msg = inventory.confirm_payment(oid)
+                if ok:
+                    storage.update_order_status(oid, "escrow_hold")
+                else:
+                    inventory.release_on_failure_or_refund(oid, reason=f"confirm_failed:{msg}")
+                    storage.update_order_status(oid, "failed", reason=msg)
+
+            storage.update_order_status(cart_order_id, "escrow_hold")
+            shopping_cart.clear_cart(uid)
+
     await update.message.reply_text(
         "✅ **Payment Successful!**\nThank you for your purchase. Your order is now being processed.",
         parse_mode="Markdown"
@@ -168,11 +303,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # MENUS
         if data.startswith("menu:"):
             return await ui.on_menu(update, context)
+        
         # Shop Page
         if data.startswith("shop_page:"):
             page = int(data.split(":")[1])
             txt, kb = ui.build_shop_keyboard(uid=user_id, page=page)
-            await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+            return await q.edit_message_text(
+                txt,
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
         
         # VIEW ITEM DETAILS (Image & Stock)
         if data.startswith("view_item:"):
@@ -234,7 +374,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await ui.ask_search(update, context)
         
         if data == "search:users":
-         return await ui.ask_user_search(update, context)
+            return await ui.ask_user_search(update, context)
 
         # BUY FLOW
         if data.startswith("buy:"):
@@ -256,20 +396,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # PAYMENTS SINGLE ITEM
         # Inside bot.py -> callback_router
         if data.startswith("pay_native:"):
-            parts = data.split(":")
-            provider = parts[1]
-            amount = parts[2]
-            sku = parts[3] if len(parts) > 3 else "Cart"
-
-            if provider == "stripe":
-                # Redirect to the function that calls your FastAPI server
-                return await ui.stripe_cart_checkout(update, context, amount)
-            
-            # Otherwise, try native (for Smart Glocal / Redsys)
             return await handle_native_checkout(update, context)
-            # Call your function that talks to your FastAPI server
-            return await ui.create_stripe_checkout(update, context, sku, amount)
-
 
         if data.startswith("hitpay:"):
             _, sku, qty = data.split(":")
@@ -280,10 +407,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("hitpay_cart:"):
             _, total = data.split(":")
             return await ui.create_hitpay_cart_checkout(update, context, float(total))
-
-        # Add this inside the "try" block of your callback_router
-        if data.startswith("pay_native:"):
-            return await handle_native_checkout(update, context)
                 
         # PAYMENTS SINGLE ITEM NETS
 
@@ -321,12 +444,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await shopping_cart.add_item(update, context, sku)
             return await shopping_cart.show_add_to_cart_feedback(update, context, sku, source)
 
-
         if data.startswith("cart:remove:"):
             sku = data.split(":")[2]
-            shopping_cart.remove_from_cart(uid, sku)
+            shopping_cart.remove_from_cart(user_id, sku)
             return await shopping_cart.view_cart(update, context)
-
         
         if data.startswith("cart:subqty:"):
             _, _, sku = data.split(":")
@@ -335,10 +456,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("cart:addqty:"):
             _, _, sku = data.split(":")
             return await shopping_cart.change_quantity(update, context, sku, +1)
-
-        if data.startswith("cart:remove:"):
-            _, _, sku = data.split(":")
-            return await shopping_cart.remove_item(update, context, sku)
         
         # EDIT ITEM → OPEN MINI PANEL
         if data.startswith("cart:edit:"):
@@ -357,7 +474,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("stripe_cart:"):
             _, total = data.split(":")
-            return await ui.stripe_cart_checkout(update, context, total)
+            return await handle_stripe_cart_checkout(update, context, total)
 
         if data.startswith("paynow_cart:"):
             _, total = data.split(":")
@@ -436,12 +553,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb_back = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
             return await q.edit_message_text(f"✅ *Payment Sent!*\n\nID: `{result}`", 
                                      parse_mode="Markdown", reply_markup=kb_back)
-            
-
-
-        if data == "cart:confirm_payment":
-            await shopping_cart.clear_cart(update.effective_user.id)
-            return await q.edit_message_text("✅ Cart payment confirmed!")
 
         # ESCROW SYSTEM
         if data.startswith("payconfirm:"):
@@ -495,8 +606,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await chat.on_public_chat_open(update, context)
         
         if data.startswith("chat:user:"):
-         target_id = int(data.split(":")[2])
-         return await chat.on_chat_user(update, context, target_id)
+            target_id = int(data.split(":")[2])
+            return await chat.on_chat_user(update, context, target_id)
 
         # WALLET
         if data == "wallet:deposit":
@@ -522,14 +633,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(f"⚠️ Error: {e}")
         except:
             await context.bot.send_message(update.effective_user.id, f"⚠️ Error: {e}")
-
-# ==========================
-# Shopping Cart
-# ==========================
-def get_cart(user_id):
-    """Helper to return the cart dictionary from storage"""
-    from modules import storage
-    return storage.get_cart(user_id)
 
 # ==========================
 # MESSAGE ROUTER
@@ -591,6 +694,8 @@ def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN missing in .env")
         return
+    
+    storage.seed_builtin_products_once()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 

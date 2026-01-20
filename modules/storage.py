@@ -2,12 +2,11 @@ import os
 import json
 import time
 from typing import List, Dict, Tuple, Set
-from modules import inventory
 from typing import Optional, Tuple, Dict
 
 
 # Initialize the global dictionary to store user carts
-CART_FILE = "cart.json"
+CART_FILE = "data/cart.json"
 
 def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
@@ -22,7 +21,7 @@ BALANCES_FILE = "balances.json"
 ORDERS_FILE = "data/orders.json"
 ORDER_EXPIRE_SECONDS = 15 * 60
 ROLES_FILE = "roles.json"
-SELLER_PRODUCTS_FILE = "seller_products.json"
+SELLER_PRODUCTS_FILE = "data/seller_products.json"
 MESSAGES_FILE = "messages.json"
 WALLETS_FILE = "wallets.json"
 USERS_FILE = "users.json"
@@ -64,11 +63,19 @@ for path, default in FILES_AND_DEFAULTS.items():
 # JSON HELPERS
 # =========================================================
 def load_json(path: str):
-    if not os.path.exists(path): return {}
+    # Ensure parent folder exists
+    _ensure_parent_dir(path)
+
+    # Create file if missing
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{}")
+        return {}
+
     with open(path, "r", encoding="utf-8") as f:
         try:
             return json.load(f)
-        except:
+        except Exception:
             return {}
 
 def save_json(path: str, data):
@@ -76,6 +83,24 @@ def save_json(path: str, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
+# =========================================================
+# SEED BUILT-IN PRODUCTS INTO SELLER_PRODUCTS (ONCE)
+# =========================================================
+def seed_builtin_products_once():
+    data = load_json(SELLER_PRODUCTS_FILE)
+    if not isinstance(data, dict):
+        data = {}
+
+    # Already seeded
+    if "0" in data and isinstance(data["0"], list) and len(data["0"]) > 0:
+        return
+
+    data["0"] = [
+        {"sku": "cat", "name": "Cat Plush", "price": 15, "emoji": "🐱", "seller_id": 0, "desc": "Built-in item", "stock": 999, "reserved": 0, "hidden": False},
+        {"sku": "hoodie", "name": "Hoodie", "price": 30, "emoji": "🧥", "seller_id": 0, "desc": "Built-in item", "stock": 999, "reserved": 0, "hidden": False},
+        {"sku": "blackcap", "name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0, "desc": "Built-in item", "stock": 999, "reserved": 0, "hidden": False},
+    ]
+    save_json(SELLER_PRODUCTS_FILE, data)
 
 # =========================================================
 # ANTI-SPAM
@@ -104,21 +129,9 @@ def update_balance(user_id: int, delta: float):
     set_balance(user_id, max(0, new_bal))
 
 def get_cart(user_id):
-    """
-    Retrieves the cart for a specific user directly from the 
-    JSON file managed by shopping_cart.py
-    """
-    if not os.path.exists(CART_FILE):
-        return {}
-    
-    try:
-        with open(CART_FILE, "r", encoding="utf-8") as f:
-            full_db = json.load(f)
-            # shopping_cart.py saves IDs as strings in JSON
-            return full_db.get(str(user_id), {})
-    except Exception as e:
-        print(f"Error loading cart in storage: {e}")
-        return {}
+    full_db = load_json(CART_FILE)
+    return full_db.get(str(user_id), {})
+
 # =========================================================
 # ORDERS & DISPUTES
 # =========================================================
@@ -213,21 +226,12 @@ def add_seller_product(
     return sku
 
 def get_seller_product_by_sku(sku: str) -> Optional[Tuple[str, Dict]]:
-    # 1. Check Built-in Products first (From shopping_cart)
-    from modules.shopping_cart import BUILTIN_PRODUCTS
-    if sku in BUILTIN_PRODUCTS:
-        prod = BUILTIN_PRODUCTS[sku]
-        return str(prod["seller_id"]), prod
-
-    # 2. If not found, check the Seller Products File
     data = load_json(SELLER_PRODUCTS_FILE)
     for sid, items in data.items():
         for it in items:
-            if it.get("sku") == sku:
+            if str(it.get("sku")) == str(sku):
                 return sid, it
-                
     return None, None
-
 
 def update_seller_stock(sku: str, delta: int) -> bool:
     data = load_json(SELLER_PRODUCTS_FILE)

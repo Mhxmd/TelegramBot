@@ -167,6 +167,10 @@ def reserve_for_payment(order_id: str, sku: str, qty: int):
     if not base:
         _patch_order(order_id, {"sku": sku, "inv_reserved": False})
         return False, "Invalid SKU"
+    
+    o = _get_order(order_id)
+    if o and o.get("inv_reserved"):
+        return True, "ok"
 
     with FileLock(_LOCK_PATH):
         data = _load()
@@ -203,12 +207,13 @@ def reserve_for_payment(order_id: str, sku: str, qty: int):
 
 # -------------------------
 # Confirm payment
-# -------------------------
-
+# -------------------------        
 def confirm_payment(order_id: str):
     o = _get_order(order_id)
     if not o:
         return False, "Order not found"
+    if o.get("inv_deducted"):
+        return True, "ok"
 
     sku = o.get("sku")
 
@@ -233,13 +238,22 @@ def confirm_payment(order_id: str):
             v = _find_variant_mut(p, var)
             if not v or int(v["reserved"]) < qty:
                 return False, "Reservation missing"
-            v["reserved"] = int(v["reserved"]) - qty
-            v["stock"] = int(v["stock"]) - qty
+            v_reserved = int(v["reserved"])
+            v_stock = int(v["stock"])
+            if v_reserved < qty or v_stock < qty:
+                return False, "Insufficient stock"
+            v["reserved"] = v_reserved - qty
+            v["stock"] = v_stock - qty
+            
         else:
             if int(p["reserved"]) < qty:
                 return False, "Reservation missing"
-            p["reserved"] = int(p["reserved"]) - qty
-            p["stock"] = int(p["stock"]) - qty
+            p_reserved = int(p["reserved"])
+            p_stock = int(p["stock"])
+            if p_reserved < qty or p_stock < qty:
+                return False, "Insufficient stock"
+            p["reserved"] = p_reserved - qty
+            p["stock"] = p_stock - qty
 
         _save(data)
 
@@ -258,8 +272,9 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
     sku = o.get("sku")
 
     # If there's no SKU, or it's a Cart purchase, skip inventory logic
-    if not sku or str(sku).startswith("cart_"):
-        _patch_order(order_id, {"inv_reason": "skipped_no_sku"})
+    sku_str = str(sku).strip()
+    if (not sku_str) or (sku_str.lower() == "cart") or sku_str.startswith("cart_"):
+        _patch_order(order_id, {"inv_reason": "skipped_cart_or_no_sku"})
         return True, "ok"
 
     qty = int(o.get("inv_qty", 1))
@@ -291,3 +306,199 @@ def release_on_failure_or_refund(order_id: str, reason="failed"):
 
     _patch_order(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
     return True, "ok"
+
+def reserve_cart_for_payment(order_id: str, items: list[dict]):
+    """
+    items: [{"sku": "cat", "qty": 2}, ...]
+    Reserves stock for ALL items atomically.
+    """
+    if not items or not isinstance(items, list):
+        _patch_order(order_id, {"inv_reserved": False, "inv_reason": "empty_cart"})
+        return False, "Cart is empty"
+
+    # Normalize and validate
+    norm_items = []
+    for it in items:
+        sku = str(it.get("sku", "")).strip()
+        qty = int(it.get("qty", 1) or 1)
+        qty = max(1, qty)
+        if not sku or sku.lower() == "none" or sku.lower() == "cart":
+            return False, "Invalid cart item SKU"
+        norm_items.append({"sku": sku, "qty": qty})
+
+    o = _get_order(order_id)
+    if o and o.get("inv_reserved") and o.get("inv_mode") == "cart":
+        return True, "ok"
+
+    with FileLock(_LOCK_PATH):
+        data = _load()
+
+        # 1) Check all availability first
+        for it in norm_items:
+            base, var = split_sku_variant(it["sku"])
+            if not base:
+                return False, f"Invalid SKU: {it['sku']}"
+
+            p = _find_product_mut(data, base)
+            if not p:
+                return False, f"Product not found: {base}"
+
+            _ensure_fields(p)
+
+            if var:
+                v = _find_variant_mut(p, var)
+                if not v:
+                    return False, f"Variant not found: {it['sku']}"
+                avail = int(v["stock"]) - int(v["reserved"])
+                if avail < it["qty"]:
+                    return False, f"Out of stock: {it['sku']} (left {max(0, avail)})"
+            else:
+                avail = int(p["stock"]) - int(p["reserved"])
+                if avail < it["qty"]:
+                    return False, f"Out of stock: {base} (left {max(0, avail)})"
+
+        # 2) Reserve all
+        for it in norm_items:
+            base, var = split_sku_variant(it["sku"])
+            p = _find_product_mut(data, base)
+            _ensure_fields(p)
+
+            if var:
+                v = _find_variant_mut(p, var)
+                v["reserved"] = int(v["reserved"]) + it["qty"]
+            else:
+                p["reserved"] = int(p["reserved"]) + it["qty"]
+
+        _save(data)
+
+    ok = _patch_order(order_id, {
+        "inv_mode": "cart",
+        "inv_items": norm_items,
+        "inv_reserved": True,
+        "inv_deducted": False,
+    })
+    if not ok:
+        return False, "Order missing"
+
+    return True, "ok"
+
+
+def confirm_cart_payment(order_id: str):
+    """
+    Deducts stock for a reserved cart order.
+    """
+    o = _get_order(order_id)
+    if not o:
+        return False, "Order not found"
+    if o.get("inv_deducted") and o.get("inv_mode") == "cart":
+        return True, "ok"
+
+    items = o.get("inv_items") or []
+    if o.get("inv_mode") != "cart" or not items:
+        return False, "Order has no cart items"
+
+    with FileLock(_LOCK_PATH):
+        data = _load()
+
+        # Validate reservations exist
+        for it in items:
+            sku = str(it.get("sku", "")).strip()
+            qty = int(it.get("qty", 1) or 1)
+            qty = max(1, qty)
+
+            base, var = split_sku_variant(sku)
+            if not base:
+                return False, f"Invalid SKU: {sku}"
+
+            p = _find_product_mut(data, base)
+            if not p:
+                return False, f"Product not found: {base}"
+            _ensure_fields(p)
+
+            if var:
+                v = _find_variant_mut(p, var)
+                if not v or int(v["reserved"]) < qty:
+                    return False, f"Reservation missing: {sku}"
+                if int(v["stock"]) < qty:
+                    return False, f"Insufficient stock: {sku}"
+            else:
+                if int(p["reserved"]) < qty:
+                    return False, f"Reservation missing: {base}"
+                if int(p["stock"]) < qty:
+                    return False, f"Insufficient stock: {base}"
+
+        # Deduct
+        for it in items:
+            sku = str(it.get("sku", "")).strip()
+            qty = int(it.get("qty", 1) or 1)
+            qty = max(1, qty)
+
+            base, var = split_sku_variant(sku)
+            p = _find_product_mut(data, base)
+            _ensure_fields(p)
+
+            if var:
+                v = _find_variant_mut(p, var)
+                v["reserved"] = int(v["reserved"]) - qty
+                v["stock"] = int(v["stock"]) - qty
+            else:
+                p["reserved"] = int(p["reserved"]) - qty
+                p["stock"] = int(p["stock"]) - qty
+
+        _save(data)
+
+    _patch_order(order_id, {"inv_reserved": False, "inv_deducted": True})
+    return True, "ok"
+
+
+def release_cart_on_failure_or_refund(order_id: str, reason: str = "failed"):
+    """
+    Releases reserved stock for a cart order.
+    If already deducted, adds stock back.
+    """
+    o = _get_order(order_id)
+    if not o:
+        return False, "Order not found"
+
+    if o.get("inv_mode") != "cart":
+        return False, "Not a cart order"
+
+    items = o.get("inv_items") or []
+    if not items:
+        _patch_order(order_id, {"inv_reason": "empty_cart_items"})
+        return True, "ok"
+
+    with FileLock(_LOCK_PATH):
+        data = _load()
+
+        for it in items:
+            sku = str(it.get("sku", "")).strip()
+            qty = int(it.get("qty", 1) or 1)
+            qty = max(1, qty)
+
+            base, var = split_sku_variant(sku)
+            if not base:
+                continue
+
+            p = _find_product_mut(data, base)
+            if not p:
+                continue
+            _ensure_fields(p)
+
+            if var:
+                v = _find_variant_mut(p, var)
+                if not v:
+                    continue
+                v["reserved"] = max(0, int(v["reserved"]) - qty)
+                if o.get("inv_deducted"):
+                    v["stock"] = int(v["stock"]) + qty
+            else:
+                p["reserved"] = max(0, int(p["reserved"]) - qty)
+                if o.get("inv_deducted"):
+                    p["stock"] = int(p["stock"]) + qty
+
+        _save(data)
+
+    _patch_order(order_id, {"inv_reserved": False, "inv_deducted": False, "inv_reason": reason})
+    return True, "ok"
+
