@@ -3,7 +3,7 @@ import json
 import time
 from typing import List, Dict, Tuple, Set
 from typing import Optional, Tuple, Dict
-
+import datetime as _dt 
 
 # Initialize the global dictionary to store user carts
 CART_FILE = "data/cart.json"
@@ -199,7 +199,8 @@ def add_seller_product(
     price: float,
     desc: str,
     stock: int = 1,
-    emoji: str = "📦"
+    emoji: str = "📦",
+    **kwargs  # <-- NEW
 ) -> str:
     data = load_json(SELLER_PRODUCTS_FILE)
 
@@ -216,6 +217,7 @@ def add_seller_product(
         "stock": int(stock),
         "emoji": emoji,
         "seller_id": seller_id,
+        "image_url": kwargs.get("image_url"),  # now safe
         "hidden": False,
         "created_ts": int(time.time())
     }
@@ -280,6 +282,33 @@ def remove_seller_product(seller_id: int, sku: str) -> bool:
     data[sid] = new_items
     save_json(SELLER_PRODUCTS_FILE, data)
     return True
+
+# =========================================================
+# Analytics for Seller
+# =========================================================
+def get_seller_orders_since(seller_uid: int, since: _dt.date):
+    """
+    Return list of dicts for all orders where:
+        - seller_id == seller_uid
+        - ordered_at >= since (YYYY-MM-DD string or date object)
+    """
+    # if you keep orders in JSON
+    all_orders = load_json(ORDERS_FILE) or {}          # OR however you fetch orders
+    rows = []
+    for oid, o in all_orders.items():
+        if int(o.get("seller_id", 0)) != seller_uid:
+            continue
+        # accept either date object or ISO string
+        order_date = _dt.date.fromisoformat(o.get("ordered_at", "1970-01-01")[:10])
+        if order_date >= since:
+            rows.append({
+                "sku": o.get("item", o.get("sku", "")),
+                "qty": int(o.get("qty", 1)),
+                "total": float(o.get("amount", 0)),
+                "status": str(o.get("status", "pending"))
+            })
+    return rows
+
 
 # =========================================================
 # USER MANAGEMENT & SEARCH

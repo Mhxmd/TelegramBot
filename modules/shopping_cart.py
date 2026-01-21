@@ -20,17 +20,25 @@ BUILTIN_PRODUCTS = {
     "blackcap": {"sku": "blackcap", "name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0},
 }
 
-def load_all_products():
+def load_all_products(viewer_id: int | None = None):
+    """
+    Returns dict sku -> product.
+    If viewer_id is supplied, adds 'is_own' flag so UI can hide buy buttons.
+    """
     products = dict(BUILTIN_PRODUCTS)
     if os.path.exists(SELLER_PRODUCTS_FILE):
         try:
             with open(SELLER_PRODUCTS_FILE, "r", encoding="utf-8") as f:
                 seller_data = json.load(f)
-                for seller_id, items in seller_data.items():
+                for seller_id_str, items in seller_data.items():
                     for it in items:
                         if "sku" in it:
+                            # flag own listings
+                            if viewer_id is not None and int(seller_id_str) == viewer_id:
+                                it = dict(it)          # do not mutate original
+                                it["is_own"] = True
                             products[it["sku"]] = it
-        except:
+        except Exception:
             pass
     return products
 

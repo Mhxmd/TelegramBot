@@ -1,9 +1,12 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram import Update
+from telegram.error import BadRequest 
 from telegram.ext import ContextTypes
 
 from modules import storage
+
+import datetime as _dt
 
 # ==========================
 # SELLER MENU
@@ -28,6 +31,7 @@ def build_seller_menu(role: str):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Add Listing", callback_data="sell:add")],
             [InlineKeyboardButton("📄 My Listings", callback_data="sell:list")],
+            [InlineKeyboardButton("📈 Analytics", callback_data="analytics:30")],    
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
 
@@ -118,6 +122,35 @@ async def show_seller_listings(update, context):
         reply_markup=InlineKeyboardMarkup(rows)
     )
 
+# ==========================
+# Analytics for Seller
+# ==========================
+
+async def show_analytics(update, context, days: int = 30):
+    q = update.callback_query
+    seller_uid = update.effective_user.id
+
+    data = _seller_analytics(seller_uid, days)
+
+    text = (
+        f"📈 *Seller Analytics*  –  {data['period']}\n\n"
+        f"• *Active listings:* {data['active']}\n"
+        f"• *Total orders:* {data['orders']}\n"
+        f"• *Completed:* {data['completed']}\n"
+        f"• *Conversion:* {data['conv_rate']} %\n"
+        f"• *Units sold:* {data['units']}\n"
+        f"• *Revenue:* ${data['revenue']:.2f}\n"
+        f"• *Top SKU:* `{data['top_sku'] or 'N/A'}`"
+    )
+
+    try:
+        await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                                  reply_markup=_analytics_kb())
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            await q.answer()          # acknowledge silently
+        else:
+            raise                     # real error, re-raise
 
 # ==========================
 # REMOVE LISTING
@@ -227,14 +260,29 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             parse_mode=ParseMode.MARKDOWN
         )
 
-        # STEP 4 — DESCRIPTION (FINAL)
+    # STEP 4 — DESCRIPTION
     if st["phase"] == "add_desc":
-        title = st["title"]
-        price = st["price"]
-        qty = st["qty"]
-        desc = text
+        st["desc"] = text
+        st["phase"] = "add_image"
+        return await msg.reply_text(
+            "📸 Send a *picture* of the item (or send /skip to use no image):",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
-        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty)
+    # STEP 5 — IMAGE (final)
+    if st["phase"] == "add_image":
+        # text fallback for /skip
+        if text and text.lower() == "/skip":
+            st["image_url"] = None
+        elif update.effective_message.photo:
+            st["image_url"] = update.effective_message.photo[-1].file_id
+        else:
+            return await msg.reply_text("Please send a photo or type /skip.")
+
+        # ----- create product -----
+        title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
+        image_url = st.get("image_url")
+        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
         storage.user_flow_state.pop(user_id, None)
 
         kb = InlineKeyboardMarkup([
@@ -247,10 +295,11 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             f"• *Title:* {title}\n"
             f"• *Price:* ${price:.2f}\n"
             f"• *Stock:* {qty}\n"
-            f"• *SKU:* `{sku}`",
-            parse_mode=ParseMode.MARKDOWN,
+            f"• *SKU:* `{sku}`" + ("\n• *Image attached*" if image_url else ""),
+            parse_mode="Markdown",
             reply_markup=kb
         )
+    
 
 # ==========================
 # SELLER REGISTRATION
@@ -272,3 +321,67 @@ async def register_seller(update, context):
         parse_mode=ParseMode.MARKDOWN
     )
     await q.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+
+# --------------------------------------------------
+#  ANALYTICS  (self-contained in seller.py)
+# --------------------------------------------------
+def _seller_analytics(seller_uid: int, days: int = 30):
+    """Return dict with seller stats for last <days> days (days=0 → all-time)."""
+    since = _dt.date.min if days == 0 else _dt.date.today() - _dt.timedelta(days=days)
+    orders = storage.get_seller_orders_since(seller_uid, since)   # expects list[dict]
+    listings = storage.list_seller_products(seller_uid)
+
+    completed = [o for o in orders if o.get("status") == "completed"]
+    revenue = sum(float(o["total"]) for o in completed)
+    units = sum(int(o["qty"]) for o in completed)
+
+    # best-selling SKU
+    sku_sales = {}
+    for o in completed:
+        sku = o["sku"]
+        sku_sales[sku] = sku_sales.get(sku, 0) + int(o["qty"])
+    top_sku = max(sku_sales.items(), key=lambda x: x[1])[0] if sku_sales else None
+
+    return {
+        "period"   : f"{days} day{'s' if days!=1 else ''}" if days else "All-time",
+        "orders"   : len(orders),
+        "completed": len(completed),
+        "revenue"  : revenue,
+        "units"    : units,
+        "conv_rate": round(len(completed) / len(orders) * 100, 1) if orders else 0,
+        "top_sku"  : top_sku,
+        "active"   : len(listings)
+    }
+
+
+def _analytics_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 30 days", callback_data="analytics:30"),
+         InlineKeyboardButton("📊 All-time", callback_data="analytics:0")],
+        [InlineKeyboardButton("🏠 Seller Center", callback_data="menu:sell")]
+    ])
+
+# --------------------------------------------------
+#  ANALYTICS 
+# --------------------------------------------------
+
+async def show_analytics(update, context, days: int = 30):
+    """Callback: display analytics panel."""
+    q = update.callback_query
+    seller_uid = update.effective_user.id
+
+    data = _seller_analytics(seller_uid, days)
+
+    text = (
+        f"📈 *Seller Analytics*  –  {data['period']}\n\n"
+        f"• *Active listings:* {data['active']}\n"
+        f"• *Total orders:* {data['orders']}\n"
+        f"• *Completed:* {data['completed']}\n"
+        f"• *Conversion:* {data['conv_rate']} %\n"
+        f"• *Units sold:* {data['units']}\n"
+        f"• *Revenue:* ${data['revenue']:.2f}\n"
+        f"• *Top SKU:* `{data['top_sku'] or 'N/A'}`"
+    )
+
+    await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
+                              reply_markup=_analytics_kb())

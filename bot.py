@@ -314,6 +314,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         
+                # ----- ANALYTICS -----
+        if data.startswith("analytics:"):
+            days = int(data.split(":")[1])
+            return await seller.show_analytics(update, context, days)
+        
         # VIEW ITEM DETAILS (Image & Stock)
         if data.startswith("view_item:"):
             sku = data.split(":")[1]
@@ -648,8 +653,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st = storage.user_flow_state.get(uid)
         if st and st.get("phase") == "add_image":
             file_id = msg.photo[-1].file_id
-            return await seller.finalize_listing(update, context, image_url=file_id)
-
+            return await seller.handle_seller_flow(update, context, text=None)   # photo branch
     # 2. HANDLE TEXT
     if not text: 
         return

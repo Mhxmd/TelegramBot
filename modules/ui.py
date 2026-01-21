@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFi
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 from typing import Optional
-from modules import shopping_cart, storage, inventory, wallet_utils
+from modules import shopping_cart, storage, inventory, wallet_utils, seller
 import stripe
 import logging
 logger = logging.getLogger(__name__)
@@ -294,51 +294,51 @@ def build_shop_keyboard(uid=None, page=0):
     rows = []
     display_lines = []
 
+    # fallback if uid missing
+    viewer_id = int(uid) if uid else 0
+
     for it in current_items:
         sku = it["sku"]
         price = it["price"]
         stock = it.get("stock", 0)
         sid = it.get("seller_id", 0)
-        
+
         seller_label = "System" if sid == 0 else f"User {sid}"
         stock_text = f"{stock} left" if stock > 0 else "🛑 *SOLD OUT*"
-        
-        # TREE FORMAT:
-        # Using ├ for the seller and └ for the "Action" line to point at buttons
+
         display_lines.append(
             f"{it.get('emoji','📦')} **{it['name']}** — `${price:.2f}`\n"
             f"├ 👤 Seller: `{seller_label}`\n"
             f"└ 📦 Stock: {stock_text}"
         )
 
-        # SIDE-BY-SIDE BUTTONS:
-        # Left button shows the name, Right button shows the action + price
-        # We use .ljust() or short strings to keep them from stacking
-        rows.append([
-            InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}"),
-            InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+        view_btn = InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}")
 
-        ])
+        # OWNER CAN’T BUY OWN ITEM
+        if viewer_id == sid:
+            rows.append([view_btn])                      # only “View”
+        else:
+            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+            rows.append([view_btn, cart_btn])            # normal two buttons
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
-    if page > 0: 
+    if page > 0:
         nav.insert(0, InlineKeyboardButton("⬅️", callback_data=f"shop_page:{page-1}"))
-    if start_idx + items_per_page < len(all_items): 
+    if start_idx + items_per_page < len(all_items):
         nav.append(InlineKeyboardButton("➡️", callback_data=f"shop_page:{page+1}"))
     rows.append(nav)
 
     rows.append([
-        InlineKeyboardButton("🔍 Search", callback_data="shop:search"), 
+        InlineKeyboardButton("🔍 Search", callback_data="shop:search"),
         InlineKeyboardButton("👤 Users", callback_data="search:users")
     ])
     rows.append([
-        InlineKeyboardButton("🛒 Cart", callback_data="cart:view"), 
+        InlineKeyboardButton("🛒 Cart", callback_data="cart:view"),
         InlineKeyboardButton("🏠 Home", callback_data="menu:main")
     ])
 
     header = "🛍 **XCHANGE MARKETPLACE**\n" + "━" * 18 + "\n"
-    # Added \n\n to separate each product "tree" clearly
     return header + "\n\n".join(display_lines), InlineKeyboardMarkup(rows)
 
 # ==========================================
@@ -355,6 +355,23 @@ async def view_item_details(update, context, sku):
         return await q.answer("Item not found.", show_alert=True)
 
     uid = update.effective_user.id
+    seller_id = int(item.get("seller_id", 0))
+
+    
+    # Hide buy buttons if viewer == seller
+    if uid == seller_id:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
+        ])
+    else:
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
+                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
+            ],
+            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
+        ])
+
     user_cart = shopping_cart.get_user_cart(uid)
     current_qty = user_cart.get(sku, {}).get("qty", 0)
 
@@ -402,8 +419,7 @@ async def view_item_details(update, context, sku):
 # ==========================================
 async def stripe_cart_checkout(update, context, total_str):
     q = update.callback_query
-    uid = update.effective_user.id
-
+    uid = update.effective_user.id   
     cart = shopping_cart.get_user_cart(uid)
     if not cart:
         return await q.answer("Cart is empty.", show_alert=True)
@@ -837,7 +853,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
             return await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
 
     if tab == "shop":
-        txt, kb = build_shop_keyboard()
+        txt, kb = build_shop_keyboard(uid=uid)
         return await safe_edit(txt, kb)
 
     if tab == "cart":
