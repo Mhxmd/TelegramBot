@@ -315,7 +315,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
                 # ----- ANALYTICS -----
-        if data.startswith("analytics:"):
+# 1. single-product analytics (MUST be first)
+        elif data.startswith("analytics:single:"):
+            sku = data.split(":")[2]
+            return await seller.show_single_product_analytics(update, context, sku)
+
+        # 2. day-range analytics
+        elif data.startswith("analytics:"):
             days = int(data.split(":")[1])
             return await seller.show_analytics(update, context, days)
         

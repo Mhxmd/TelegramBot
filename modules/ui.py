@@ -344,23 +344,36 @@ def build_shop_keyboard(uid=None, page=0):
 # ==========================================
 # View Item Details Screen (Updated with Add-to-Cart qty)
 # ==========================================
-
 async def view_item_details(update, context, sku):
-    from modules import shopping_cart  # ensure import inside function to avoid circular imports
+    from modules import shopping_cart
 
     q = update.callback_query
     item = get_any_product_by_sku(sku)
-    
     if not item:
         return await q.answer("Item not found.", show_alert=True)
 
     uid = update.effective_user.id
     seller_id = int(item.get("seller_id", 0))
 
-    
-    # Hide buy buttons if viewer == seller
+    user_cart = shopping_cart.get_user_cart(uid)
+    current_qty = user_cart.get(sku, {}).get("qty", 0)
+    add_label = "🛒 Add to Cart" if current_qty == 0 else f"🛒 Add to Cart ({current_qty})"
+
+    seller_label = "System Admin" if seller_id == 0 else f"User {seller_id}"
+
+    text = (
+        f"{item.get('emoji','📦')} **{item['name']}**\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👤 **Seller:** `{seller_label}`\n"
+        f"💰 **Price:** `${item['price']:.2f}`\n"
+        f"📋 **In Stock:** `{item.get('stock', 0)}` units\n\n"
+        f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
+    )
+
+    # GUARD: seller can’t buy own item
     if uid == seller_id:
         kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{sku}")],
             [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
         ])
     else:
@@ -372,35 +385,6 @@ async def view_item_details(update, context, sku):
             [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
         ])
 
-    user_cart = shopping_cart.get_user_cart(uid)
-    current_qty = user_cart.get(sku, {}).get("qty", 0)
-
-    # Dynamic Add-to-Cart label
-    add_label = "🛒 Add to Cart" if current_qty == 0 else f"🛒 Add to Cart ({current_qty})"
-
-    seller_id = item.get("seller_id", 0)
-    seller_label = "System Admin" if seller_id == 0 else f"User {seller_id}"
-
-    # Item description
-    text = (
-        f"{item.get('emoji','📦')} **{item['name']}**\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"👤 **Seller:** `{seller_label}`\n"
-        f"💰 **Price:** `${item['price']:.2f}`\n"
-        f"📋 **In Stock:** `{item.get('stock', 0)}` units\n\n"
-        f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
-    )
-
-    # Buttons including dynamic cart qty
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
-            InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
-        ],
-        [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
-    ])
-
-    # If image exists → send photo card
     if item.get("image_url"):
         await q.message.delete()
         return await context.bot.send_photo(
@@ -410,8 +394,7 @@ async def view_item_details(update, context, sku):
             parse_mode="Markdown",
             reply_markup=kb
         )
-    
-    # Otherwise → edit text normally
+
     await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
 
 # ==========================================

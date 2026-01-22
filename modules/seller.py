@@ -3,8 +3,8 @@ from telegram.constants import ParseMode
 from telegram import Update
 from telegram.error import BadRequest 
 from telegram.ext import ContextTypes
-
-from modules import storage
+from telegram.error import BadRequest 
+from modules import shopping_cart, storage
 
 import datetime as _dt
 
@@ -185,7 +185,36 @@ async def do_remove_listing(update, context, sku: str):
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
     )
+# ==========================
+# Analytical
+# ==========================
+async def show_single_product_analytics(update, context, sku: str):
+    q = update.callback_query
+    seller_uid = update.effective_user.id
 
+    # get all completed orders for this sku + seller
+    orders = storage.get_seller_orders_since(seller_uid, _dt.date.min)
+    completed = [o for o in orders if o.get("status") == "completed" and o.get("sku") == sku]
+
+    revenue = sum(float(o["total"]) for o in completed)
+    units   = sum(int(o["qty"]) for o in completed)
+
+    item = shopping_cart.get_any_product_by_sku(sku) or {}
+
+    text = (
+        f"📈 *Product Analytics* – `{sku}`\n\n"
+        f"📦 *Name:* {item.get('name', sku)}\n"
+        f"💰 *Revenue:* ${revenue:.2f}\n"
+        f"📦 *Units Sold:* {units}\n"
+        f"📊 *Completed Orders:* {len(completed)}"
+    )
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 Back to Item", callback_data=f"view_item:{sku}"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")
+    ]])
+
+    await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
 
 # ==========================
 # ADD LISTING FLOW
@@ -385,3 +414,44 @@ async def show_analytics(update, context, days: int = 30):
 
     await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN,
                               reply_markup=_analytics_kb())
+    
+
+
+async def show_single_product_analytics(update, context, sku: str):
+    q = update.callback_query
+    seller_uid = update.effective_user.id
+
+    # build stats 
+    orders = storage.get_seller_orders_since(seller_uid, _dt.date.min)
+    completed = [o for o in orders if o.get("status") == "completed" and o.get("sku") == sku]
+    revenue = sum(float(o["total"]) for o in completed)
+    units   = sum(int(o["qty"]) for o in completed)
+    item = shopping_cart.get_any_product_by_sku(sku) or {}
+
+    #  define text BEFORE using it 
+    text = (
+        f"📈 *Product Analytics* – `{sku}`\n\n"
+        f"📦 *Name:* {item.get('name', sku)}\n"
+        f"💰 *Revenue:* ${revenue:.2f}\n"
+        f"📦 *Units Sold:* {units}\n"
+        f"📊 *Completed Orders:* {len(completed)}"
+    )
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 Back to Item", callback_data=f"view_item:{sku}"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")
+    ]])
+
+    # send / edit 
+    try:
+        await q.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+    except BadRequest as e:
+        if "no text in the message" in str(e).lower():
+            await context.bot.send_message(
+                chat_id=q.message.chat.id,
+                text=text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=kb
+            )
+        else:
+            raise
