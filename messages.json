@@ -1,0 +1,182 @@
+{
+  "t_1761562621_1336081032_0": {
+    "buyer_id": 1336081032,
+    "seller_id": 0,
+    "product": {
+      "sku": null,
+      "name": "Cat",
+      "price": 15
+    },
+    "messages": [
+      {
+        "from": 1336081032,
+        "text": "hello",
+        "ts": 1761562632
+      },
+      {
+        "from": 1336081032,
+        "text": "hello",
+        "ts": 1762076024
+      },
+      {
+        "from": 1336081032,
+        "text": "Hello",
+        "ts": 1762080090
+      },
+      {
+        "from": 1336081032,
+        "text": "hi",
+        "ts": 1762080103
+      }
+    ],
+    "hidden_from": [
+      1336081032
+    ]
+  },
+  "t_1761564269_1336081032_0": {
+    "buyer_id": 1336081032,
+    "seller_id": 0,
+    "product": {
+      "sku": null,
+      "name": "Cat",
+      "price": 15
+    },
+    "messages": [],
+    "hidden_from": [
+      1336081032
+    ]
+  },
+  "t_1762309298_1336081032_1576365386": {
+    "buyer_id": 1336081032,
+    "seller_id": 1576365386,
+    "product": {
+      "sku": "u1576365386_1762076395",
+      "name": "Diddyblud",
+      "price": 67.41
+    },
+    "messages": [],
+    "hidden_from": [
+      1336081032
+    ]
+  },
+  "t_1762309307_1336081032_1365482381": {
+    "buyer_id": 1336081032,
+    "seller_id": 1365482381,
+    "product": {
+      "sku": "u1365482381_1762077805",
+      "name": "67",
+      "price": 67.0
+    },
+    "messages": [
+      {
+        "from": 1336081032,
+        "text": "67 67",
+        "ts": 1762309314
+      },
+      {
+        "from": 1365482381,
+        "text": "lesgo",
+        "ts": 1762309330
+      },
+      {
+        "from": 1336081032,
+        "text": "HAHAAA IT WORKS",
+        "ts": 1762309340
+      },
+      {
+        "from": 1365482381,
+        "text": "i got the notification",
+        "ts": 1762309351
+      }
+    ],
+    "hidden_from": [
+      1336081032
+    ]
+  },
+  "t_1762309391_1336081032_1576365386": {
+    "buyer_id": 1336081032,
+    "seller_id": 1576365386,
+    "product": {
+      "sku": "u1576365386_1762076395",
+      "name": "Diddyblud",
+      "price": 67.41
+    },
+    "messages": [
+      {
+        "from": 1336081032,
+        "text": "DIDDY BLUD",
+        "ts": 1762309399
+      },
+      {
+        "from": 1336081032,
+        "text": "diddya",
+        "ts": 1763968753
+      }
+    ],
+    "hidden_from": [
+      1336081032
+    ]
+  },
+  "t_1762311411_912073829_1576365386": {
+    "buyer_id": 912073829,
+    "seller_id": 1576365386,
+    "product": {
+      "sku": "u1576365386_1762076395",
+      "name": "Diddyblud",
+      "price": 67.41
+    },
+    "messages": []
+  },
+  "t_1764345629_1336081032_1365482381": {
+    "buyer_id": 1336081032,
+    "seller_id": 1365482381,
+    "product": {
+      "sku": "u1365482381_1762077805",
+      "name": "67",
+      "price": 67.0
+    },
+    "messages": [
+      {
+        "from": 1365482381,
+        "text": "hi, you want to enquire about 67?",
+        "ts": 1764345856
+      },
+      {
+        "from": 1336081032,
+        "text": "Yes 67 67",
+        "ts": 1764345870
+      },
+      {
+        "from": 1336081032,
+        "text": "i testing the cart feature rn",
+        "ts": 1764345876
+      },
+      {
+        "from": 1336081032,
+        "text": "HAHAHAH",
+        "ts": 1764345883
+      },
+      {
+        "from": 1365482381,
+        "text": "HAHHAAHAHA",
+        "ts": 1764345903
+      }
+    ]
+  },
+  "t_1766388330_1336081032_1576365386": {
+    "buyer_id": 1336081032,
+    "seller_id": 1576365386,
+    "product": {
+      "sku": "u1576365386_1762076395",
+      "name": "Diddyblud",
+      "price": 67.41
+    },
+    "messages": [
+      {
+        "from": 1336081032,
+        "text": "helo",
+        "ts": 1766388334
+      }
+    ]
+  }
+}

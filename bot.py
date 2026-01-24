@@ -3,6 +3,7 @@
 # Modular — Shopping Cart + Escrow + Wallet + Chat + Stripe/Nets/PayNow
 # ==========================
 
+from datetime import time
 import os
 import logging
 from dotenv import load_dotenv
@@ -285,6 +286,27 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     )
 
 # ==========================
+# SELLER SHIP PROMPT
+# ==========================
+async def seller_ship_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    q = update.callback_query
+    uid = update.effective_user.id
+    o = storage.get_order_by_id(order_id)
+    if not o or int(o.get("seller_id", 0)) != uid:
+        return await q.answer("❌ Not your order", show_alert=True)
+
+    storage.user_flow_state[uid] = {"phase": "await_tracking", "order_id": order_id}
+    await q.edit_message_text("📦 Send me the *tracking number* (or type 'none' if not tracked):",
+                              parse_mode="Markdown")
+
+async def buyer_mark_received(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    q = update.callback_query
+    storage.update_order_status(order_id, "completed")
+    storage.update_order_meta(order_id, {"received_ts": int(time.time())})
+    await q.edit_message_text("✅ You confirmed delivery. Funds released to seller!")
+
+
+# ==========================
 # CALLBACK ROUTER
 # ==========================
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,6 +322,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     try:
+        # Seller Ship Flow
+            # ===== SELLER SHIP FLOW =====
+        if data.startswith("seller:ship:"):
+            _, order_id = data.split(":", 1)
+            return await seller_ship_prompt(update, context, order_id)
+
+        # ===== BUYER CONFIRM RECEIVED =====
+        if data.startswith("order_complete:"):
+            _, order_id = data.split(":", 1)
+            return await buyer_mark_received(update, context, order_id)
+
         # MENUS
         if data.startswith("menu:"):
             return await ui.on_menu(update, context)
@@ -689,9 +722,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await chat.handle_private_message(update, context, text)
 
     # 5. SELLER FLOW
-    if seller.is_in_seller_flow(uid):
-        return await seller.handle_seller_flow(update, context, text)
+    if seller.is_in_seller_flow(uid) and st.get("phase") == "await_tracking":
+        tracking = text.strip()
+        oid = st["order_id"]
+        storage.update_order_meta(oid, {"tracking_code": tracking, "status": "shipped"})
+        storage.user_flow_state.pop(uid, None)
 
+        # notify buyer
+        o = storage.get_order_by_id(oid)
+        await context.bot.send_message(
+            o["buyer_id"],
+            f"🚚 Your order `{oid}` has been shipped!\n"
+            f"Tracking: `{tracking}`\n"
+            "Tap ✅ *Mark received* in /orders once it arrives.",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ Buyer notified.")
     # 6. WALLET WITHDRAWAL
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)

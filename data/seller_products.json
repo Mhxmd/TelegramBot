@@ -1,0 +1,62 @@
+{
+  "0": [
+    {
+      "sku": "cat",
+      "name": "Cat Plush",
+      "price": 15,
+      "emoji": "\ud83d\udc31",
+      "seller_id": 0,
+      "desc": "Built-in item",
+      "stock": 999,
+      "reserved": 0,
+      "hidden": false
+    },
+    {
+      "sku": "hoodie",
+      "name": "Hoodie",
+      "price": 30,
+      "emoji": "\ud83e\udde5",
+      "seller_id": 0,
+      "desc": "Built-in item",
+      "stock": 999,
+      "reserved": 0,
+      "hidden": false
+    },
+    {
+      "sku": "blackcap",
+      "name": "Black Cap",
+      "price": 12,
+      "emoji": "\ud83e\udde2",
+      "seller_id": 0,
+      "desc": "Built-in item",
+      "stock": 999,
+      "reserved": 0,
+      "hidden": false
+    }
+  ],
+  "1336081032": [
+    {
+      "sku": "sku_1336081032_1768966108",
+      "name": "Plant",
+      "price": 9.99,
+      "desc": "A plant to decorate the house",
+      "stock": 10,
+      "emoji": "\ud83d\udce6",
+      "seller_id": 1336081032,
+      "hidden": false,
+      "created_ts": 1768966108
+    },
+    {
+      "sku": "sku_1336081032_1768978998",
+      "name": "Jeffrey Epstein",
+      "price": 1.0,
+      "desc": "The GOAT",
+      "stock": 1,
+      "emoji": "\ud83d\udce6",
+      "seller_id": 1336081032,
+      "image_url": "AgACAgUAAxkBAAILQ2lweQ_X9Bss9iRylG3SSDa91_RvAAKbDWsbj96IV59hnapittcgAQADAgADbQADOAQ",
+      "hidden": false,
+      "created_ts": 1768978998
+    }
+  ]
+}

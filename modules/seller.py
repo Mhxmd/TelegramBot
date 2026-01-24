@@ -350,6 +350,20 @@ async def register_seller(update, context):
         parse_mode=ParseMode.MARKDOWN
     )
     await q.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+# --------------------------------------------------
+#  Seller Ship Prompt
+# --------------------------------------------------
+async def seller_ship_prompt(update, context, order_id):
+    q = update.callback_query
+    uid = update.effective_user.id
+    o = storage.get_order_by_id(order_id)
+    if int(o.get("seller_id")) != uid:
+        return await q.answer("❌ Not your order", show_alert=True)
+
+    # store temp state
+    storage.user_flow_state[uid] = {"phase": "await_tracking", "order_id": order_id}
+    await q.edit_message_text("📦 Send me the *tracking number* (or type 'none' if not tracked):",
+                              parse_mode="Markdown")
 
 # --------------------------------------------------
 #  ANALYTICS  (self-contained in seller.py)

@@ -1,0 +1,49 @@
+{
+  "1336081032": {},
+  "908682618": {
+    "u1365482381_1762077805": {
+      "sku": "u1365482381_1762077805",
+      "name": "67",
+      "price": 67.0,
+      "qty": 3,
+      "emoji": "\ud83d\uded2",
+      "seller_id": 1365482381
+    }
+  },
+  "1435737445": {
+    "cat": {
+      "sku": "cat",
+      "name": "Cat Plush",
+      "price": 15.0,
+      "qty": 1,
+      "emoji": "\ud83d\udc31",
+      "seller_id": 0
+    },
+    "u1336081032_1766586349": {
+      "sku": "u1336081032_1766586349",
+      "name": "Freddie Plushie",
+      "price": 1987.0,
+      "qty": 2,
+      "emoji": "\ud83d\uded2",
+      "seller_id": 1336081032
+    }
+  },
+  "1085982291": {
+    "hoodie": {
+      "sku": "hoodie",
+      "name": "Hoodie",
+      "price": 30.0,
+      "qty": 2,
+      "emoji": "\ud83e\udde5",
+      "seller_id": 0
+    },
+    "blackcap": {
+      "sku": "blackcap",
+      "name": "Black Cap",
+      "price": 12.0,
+      "qty": 1,
+      "emoji": "\ud83e\udde2",
+      "seller_id": 0
+    }
+  }
+}

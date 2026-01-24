@@ -949,6 +949,13 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
                         InlineKeyboardButton(f"⚖️ Dispute Completed Order {oid}", callback_data=f"dispute_after:{oid}"),
                         InlineKeyboardButton(f"🗄 Archive", callback_data=f"orderarchive:{oid}")
                     ])
+                # Escrow Holding
+                if status == "escrow_hold":
+                    buttons.append([InlineKeyboardButton(f"📦 Mark Shipped {oid}",
+                                                        callback_data=f"seller:ship:{oid}")])
+                elif status == "shipped":
+                    buttons.append([InlineKeyboardButton(f"✅ Mark Received {oid}",
+                                                        callback_data=f"order_complete:{oid}")])
 
                 # Pending: Only option is to cancel
                 elif status in ("pending", "awaiting_payment"):
