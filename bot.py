@@ -305,6 +305,90 @@ async def buyer_mark_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     storage.update_order_meta(order_id, {"received_ts": int(time.time())})
     await q.edit_message_text("✅ You confirmed delivery. Funds released to seller!")
 
+# --------------------------------------------------
+# CART-WIDE HELPERS FOR NEW GATEWAYS
+# --------------------------------------------------
+async def handle_smart_glocal_cart(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
+    await _send_cart_invoice(update, context, total,
+                           os.getenv("PROVIDER_TOKEN_SMART_GLOCAL"),
+                           "Smart Glocal")
+
+async def handle_redsys_cart(update: Update, context: ContextTypes.DEFAULT_TYPE, total: float):
+    await _send_cart_invoice(update, context, total,
+                           os.getenv("PROVIDER_TOKEN_REDSYS"),
+                           "Redsys")
+
+async def _send_cart_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           total: float, provider_token: str, provider_name: str):
+    if not provider_token:
+        await update.callback_query.answer(
+            f"❌ {provider_name} provider token missing in .env", show_alert=True)
+        return
+
+    user_id = update.effective_user.id
+    cart    = shopping_cart.get_cart(user_id)
+    if not cart:
+        await update.callback_query.answer("❌ Your cart is empty.", show_alert=True)
+        return
+
+    cart_order_id = storage.add_order(
+        buyer_id=user_id,
+        item_name="Cart",
+        qty=sum(int(it.get("qty", 1)) for it in cart.values()),
+        amount=float(total),
+        method=provider_name.lower().replace(" ", "_") + "_cart",
+        seller_id=0
+    )
+
+    child_order_ids = []
+    reserved_child_ids = []
+
+    try:
+        for sku, item in cart.items():
+            qty   = int(item.get("qty", 1))
+            price = float(item.get("price", 0.0))
+            amount = price * qty
+
+            seller_id = 0
+            sid, prod = storage.get_seller_product_by_sku(sku)
+            if prod:
+                seller_id = int(prod.get("seller_id", 0))
+
+            child_id = storage.add_order(
+                buyer_id=user_id,
+                item_name=str(sku),
+                qty=qty,
+                amount=amount,
+                method=provider_name.lower().replace(" ", "_") + "_cart_item",
+                seller_id=seller_id
+            )
+            child_order_ids.append(child_id)
+
+            ok, msg = inventory.reserve_for_payment(child_id, str(sku), qty)
+            if not ok:
+                raise RuntimeError(f"{sku}: {msg}")
+            reserved_child_ids.append(child_id)
+
+        _patch_order_meta(cart_order_id, {"cart_child_orders": child_order_ids})
+
+        price_in_cents = int(round(total * 100))
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title="Order: Cart",
+            description=f"Cart checkout via {provider_name}",
+            payload=f"PAYCART|{cart_order_id}",
+            provider_token=provider_token,
+            currency="SGD",
+            prices=[LabeledPrice("Total Price", price_in_cents)],
+            start_parameter="market-cart-checkout"
+        )
+        await update.callback_query.answer()
+
+    except Exception as e:
+        for oid in reversed(reserved_child_ids):
+            inventory.release_on_failure_or_refund(oid, reason="cart_checkout_failed")
+        storage.update_order_status(cart_order_id, "failed", reason=str(e))
+        await update.callback_query.answer(f"❌ Cart checkout failed: {e}", show_alert=True)
 
 # ==========================
 # CALLBACK ROUTER
@@ -327,6 +411,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("seller:ship:"):
             _, order_id = data.split(":", 1)
             return await seller_ship_prompt(update, context, order_id)
+        # Redsys Cart Checkout and Smart Glocal Cart Checkout
+        if data.startswith("redsys_cart:"):
+            _, total = data.split(":")
+            return await handle_redsys_cart(update, context, float(total))
+
+        if data.startswith("smart_glocal_cart:"):
+            _, total = data.split(":")
+            return await handle_smart_glocal_cart(update, context, float(total))
 
         # ===== BUYER CONFIRM RECEIVED =====
         if data.startswith("order_complete:"):
@@ -630,10 +722,25 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 return await q.answer("❌ Wrong answer", show_alert=True)
 
+        # ----- FOOTER FROM ORDERS SCREEN  -----
+        if data == "menu:orders:main":
+            await q.answer()
+            kb, txt = ui.build_main_menu(storage.get_balance(user_id), user_id)
+            try:
+                await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+            except Exception:                      # message gone → send fresh
+                await context.bot.send_message(user_id, txt, reply_markup=kb, parse_mode="Markdown")
+            return
+
         # CHAT
         if data.startswith("contact:"):
             _, sku, sid = data.split(":")
             return await chat.on_contact_seller(update, context, sku, int(sid))
+
+                # ----- ORDER-RELATED CHAT -----
+        if data.startswith("chat:order:"):
+            _, order_id = data.split(":", 1)
+            return await chat.on_chat_from_order(update, context, order_id)
 
         if data.startswith("chat:open:"):
             return await chat.on_chat_open(update, context, data.split(":")[1])
@@ -652,7 +759,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("chat:user:"):
             target_id = int(data.split(":")[2])
             return await chat.on_chat_user(update, context, target_id)
-
         # WALLET
         if data == "wallet:deposit":
             return await wallet.show_deposit_info(update, context)
@@ -681,67 +787,84 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================
 # MESSAGE ROUTER
 # ==========================
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = msg.from_user.id
     text = (msg.text or "").strip()
     storage.ensure_user_exists(uid, update.effective_user.username)
 
-    # 1. HANDLE PHOTO UPLOADS (For Seller Image Flow)
+    # --- single state lookup used everywhere below ---
+    st = storage.user_flow_state.get(uid)
+
+    # 0. SELLER ADD-LISTING FLOW (must be first)
+    if seller.is_in_seller_flow(uid):
+        return await seller.handle_seller_flow(update, context, text)
+
+    # 1. PHOTO UPLOAD (only for seller image step)
     if msg.photo:
-        st = storage.user_flow_state.get(uid)
         if st and st.get("phase") == "add_image":
-            file_id = msg.photo[-1].file_id
-            return await seller.handle_seller_flow(update, context, text=None)   # photo branch
-    # 2. HANDLE TEXT
-    if not text: 
+            # let handle_seller_flow deal with the photo
+            return await seller.handle_seller_flow(update, context, None)
+        # other photo handlers can stay here if you need them
         return
 
-    # 3. SEARCH MODE (Moved up to catch input during active search)
+    # 2. TEXT INPUT
+    if not text:
+        return
+
+    # 3. SEARCH MODE
     search_mode = context.user_data.get("awaiting_search")
     if search_mode:
-        context.user_data["awaiting_search"] = None # Reset state immediately
-        
+        context.user_data["awaiting_search"] = None
         if search_mode == "users":
-            # Pass all products to help find sellers not yet in the user DB
-            all_prods = ui.enumerate_all_products() 
+            all_prods = ui.enumerate_all_products()
             results = storage.search_users(text, all_prods)
             return await ui.show_user_search_results(update, context, results)
-            
         elif search_mode == "products":
             results = ui.search_products_by_name(text)
             logger.info(f"Search query='{text}' results={len(results)}")
             return await ui.show_search_results(update, context, results)
 
-
     # 4. CHAT SYSTEMS
     if chat.is_in_public_chat(uid):
         return await chat.handle_public_message(update, context, text)
-
     if chat.is_in_private_thread(uid):
         return await chat.handle_private_message(update, context, text)
 
-    # 5. SELLER FLOW
-    if seller.is_in_seller_flow(uid) and st.get("phase") == "await_tracking":
-        tracking = text.strip()
-        oid = st["order_id"]
-        storage.update_order_meta(oid, {"tracking_code": tracking, "status": "shipped"})
-        storage.user_flow_state.pop(uid, None)
+    # STEP 5 — IMAGE (final)
+    if st["phase"] == "add_image":
+        # accept EITHER a photo OR the text "/skip"
+        if update.effective_message.photo:
+            st["image_url"] = update.effective_message.photo[-1].file_id
+        elif text and text.lower() == "/skip":
+            st["image_url"] = None
+        else:
+            return await msg.reply_text("Please send a photo or type /skip.")
 
-        # notify buyer
-        o = storage.get_order_by_id(oid)
-        await context.bot.send_message(
-            o["buyer_id"],
-            f"🚚 Your order `{oid}` has been shipped!\n"
-            f"Tracking: `{tracking}`\n"
-            "Tap ✅ *Mark received* in /orders once it arrives.",
-            parse_mode="Markdown"
+        # ----- create product -----
+        title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
+        image_url = st.get("image_url")
+        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+        storage.user_flow_state.pop(user_id, None)
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")],
+            [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop")],
+        ])
+
+        await msg.reply_text(
+            f"✅ *Listing Added!*\n\n"
+            f"• *Title:* {title}\n"
+            f"• *Price:* ${price:.2f}\n"
+            f"• *Stock:* {qty}\n"
+            f"• *SKU:* `{sku}`" + ("\n• *Image attached*" if image_url else ""),
+            parse_mode="Markdown",
+            reply_markup=kb
         )
-        await update.message.reply_text("✅ Buyer notified.")
     # 6. WALLET WITHDRAWAL
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
-
 
 # ==========================
 # MAIN

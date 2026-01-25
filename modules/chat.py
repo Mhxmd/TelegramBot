@@ -313,3 +313,81 @@ async def on_chat_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, thr
     # FIX: instead of q.data = "...", we pass the tab as an argument
     # Note: This requires you to update the on_menu signature in ui.py (see below)
     return await on_menu(update, context, force_tab="messages")
+
+# ----------------- Order-Related Chat -----------------
+
+async def on_chat_from_order(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    """
+    Opens a private thread between buyer & seller using the order as the topic.
+    Re-uses the existing thread model; creates one if none exists.
+    """
+    q = update.callback_query
+    uid = update.effective_user.id
+    o = storage.get_order_by_id(order_id)
+    if not o:
+        await q.answer("Order not found.", show_alert=True)
+        return
+
+    # Only buyer or seller can enter
+    if uid not in (o.get("buyer_id"), o.get("seller_id")):
+        await q.answer("Not your order.", show_alert=True)
+        return
+
+    # Build a minimal product dict from the order
+    product = {
+        "sku": order_id,          # unique id for this thread
+        "name": f"Order {order_id}",
+        "price": float(o.get("amount", 0))
+    }
+
+    # Re-use the normal thread helper
+    thread_id = storage.create_thread(
+        buyer_id=o["buyer_id"],
+        seller_id=o["seller_id"],
+        product=product
+    )
+    storage.active_private_chats[uid] = thread_id
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Open Chat", callback_data=f"chat:open:{thread_id}")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
+    ])
+
+    await q.edit_message_text(
+        "💬 *Order Chat Opened*\n"
+        f"Topic: Order `{order_id}`\n\n"
+        "Tap *Open Chat* to message the other party.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=kb
+    )
+
+    # Notify the *other* party
+    other = o["seller_id"] if uid == o["buyer_id"] else o["buyer_id"]
+    if other != 0:                       # only notify human users
+        try:
+            await context.bot.send_message(
+                other,
+                f"📩 *New Message*\n"
+                f"User {uid} opened a chat about order `{order_id}`.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception:
+            storage.add_pending_notification(
+                other,
+                f"📨 Offline: User {uid} opened chat for order `{order_id}`."
+            )
+
+# Export List
+__all__ = [
+    "is_in_private_thread",
+    "is_in_public_chat",
+    "on_contact_seller",
+    "on_chat_user",
+    "on_chat_open",
+    "on_chat_from_order",  
+    "handle_private_message",
+    "handle_public_message",
+    "on_chat_exit",
+    "on_public_chat_open",
+    "on_chat_delete",
+]

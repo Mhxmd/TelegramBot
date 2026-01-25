@@ -30,7 +30,7 @@
       "seller_id": 0,
       "desc": "Built-in item",
       "stock": 999,
-      "reserved": 0,
+      "reserved": 1,
       "hidden": false
     }
   ],
@@ -57,6 +57,18 @@
       "image_url": "AgACAgUAAxkBAAILQ2lweQ_X9Bss9iRylG3SSDa91_RvAAKbDWsbj96IV59hnapittcgAQADAgADbQADOAQ",
       "hidden": false,
       "created_ts": 1768978998
+    },
+    {
+      "sku": "sku_1336081032_1769327145",
+      "name": "gary",
+      "price": 1.0,
+      "desc": "gary",
+      "stock": 4,
+      "emoji": "\ud83d\udce6",
+      "seller_id": 1336081032,
+      "image_url": "AgACAgUAAxkBAAIMo2l1yilYnGvEqNCtZIbMiB5P49T1AAJQDmsbos2wV0gjF-K-AuX-AQADAgADbQADOAQ",
+      "hidden": false,
+      "created_ts": 1769327145
     }
   ]
 }

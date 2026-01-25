@@ -412,6 +412,42 @@ def clear_pending_notifications(user_id: int):
     data.pop(str(user_id), None)
     save_json(PENDING_FILE, data)
 
+# --------------------------------------------------
+# CANCEL PENDING ORDER (used by UI cancel button)
+# --------------------------------------------------
+def cancel_pending_order(order_id: str, user_id: int, grace_seconds: int = 900) -> tuple[bool, str]:
+    """
+    Allows buyer to cancel an order while it is still in 'pending' status
+    and younger than grace_seconds.
+    Returns (success, message)
+    """
+    orders = load_json(ORDERS_FILE)
+    o = orders.get(order_id)
+    if not o:
+        return False, "Order not found"
+
+    # Only the buyer can cancel
+    if int(o.get("buyer_id", 0)) != user_id:
+        return False, "Not your order"
+
+    # Only pending orders can be cancelled
+    if o.get("status") not in {"pending", "awaiting_payment", "created"}:
+        return False, "Order can no longer be cancelled"
+
+    # Time gate
+    now = int(time.time())
+    created = int(o.get("ts", 0))
+    if now - created > grace_seconds:
+        return False, "Cancellation period expired"
+
+    # Release any reserved inventory
+    from modules import inventory
+    inventory.release_on_failure_or_refund(order_id, reason="user_cancelled")
+
+    # Mark cancelled
+    update_order_status(order_id, "cancelled", reason="User cancelled")
+    return True, "Order cancelled"
+
 # =========================================================
 # ARCHIVE SYSTEM
 # =========================================================
@@ -480,3 +516,24 @@ def expire_stale_pending_orders(expire_seconds: int = ORDER_EXPIRE_SECONDS) -> i
         save_json(ORDERS_FILE, data)  # use your existing save_json
 
     return changed
+
+# =========================================================
+# Create thread for buyer-seller chat based on order
+# =========================================================
+
+def create_thread(buyer_id: int, seller_id: int, product: dict) -> str:
+    threads = load_json(MESSAGES_FILE)
+    tid = f"th_{int(time.time())}"
+    threads[tid] = {
+        "buyer_id": buyer_id,
+        "seller_id": seller_id,
+        "product": product,
+        "messages": [],
+        "hidden_from": [],
+        "ts": int(time.time())
+    }
+    save_json(MESSAGES_FILE, threads)
+    return tid
+
+def get_thread(thread_id: str) -> dict | None:
+    return load_json(MESSAGES_FILE).get(thread_id)

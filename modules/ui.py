@@ -896,84 +896,77 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
         return await safe_edit(msg_text, InlineKeyboardMarkup(buttons))
     
     if tab == "orders":
-            # 1. Cleanup old unpaid orders
-            storage.expire_stale_pending_orders(expire_seconds=900)
+        # 1. Cleanup old unpaid orders
+        storage.expire_stale_pending_orders(expire_seconds=900)
 
-            orders = storage.list_orders_for_user(uid)
-
-            if not orders:
-                txt = "📦 *Orders*\n\nNo orders yet."
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
-                return await safe_edit(txt, kb)
-
-            # 2. Sort by newest first
-            orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
-
-            lines = ["📦 *Your Order History*", "━" * 15]
-            buttons = []
-
-            for o in orders[:15]:
-                oid = o.get("id", "unknown")
-                item = o.get("item", "Product")
-                qty = o.get("qty", 1)
-                amt = float(o.get("amount", 0))
-                status = str(o.get("status", "pending")).lower()
-                
-                status_map = {
-                    "pending": "⏳ Awaiting Payment",
-                    "escrow_hold": "🔒 Held in Escrow",
-                    "completed": "✅ Completed",
-                    "disputed": "⚖️ Under Dispute",
-                    "refunded": "💰 Refunded",
-                    "cancelled": "❌ Cancelled",
-                    "expired": "❓ Expired"
-                }
-                status_text = status_map.get(status, f"❓ {status.title()}")
-
-                lines.append(f"\n🆔 `{oid}`\n└ {item} (x{qty}) — `${amt:.2f}`\n   Status: *{status_text}*")
-
-                # --- 3. Action Buttons ---
-                
-                # Active Escrow: Buyer can release funds or dispute
-                if status == "escrow_hold":
-                    buttons.append([
-                        InlineKeyboardButton(f"🤝 Confirm Receipt {oid}", callback_data=f"order_complete:{oid}")
-                    ])
-                    buttons.append([
-                        InlineKeyboardButton(f"⚠️ Dispute / Chat", callback_data=f"chat:order:{oid}")
-                    ])
-                
-                # Completed: Buyer can still dispute if something is wrong
-                elif status == "completed":
-                    buttons.append([
-                        InlineKeyboardButton(f"⚖️ Dispute Completed Order {oid}", callback_data=f"dispute_after:{oid}"),
-                        InlineKeyboardButton(f"🗄 Archive", callback_data=f"orderarchive:{oid}")
-                    ])
-                # Escrow Holding
-                if status == "escrow_hold":
-                    buttons.append([InlineKeyboardButton(f"📦 Mark Shipped {oid}",
-                                                        callback_data=f"seller:ship:{oid}")])
-                elif status == "shipped":
-                    buttons.append([InlineKeyboardButton(f"✅ Mark Received {oid}",
-                                                        callback_data=f"order_complete:{oid}")])
-
-                # Pending: Only option is to cancel
-                elif status in ("pending", "awaiting_payment"):
-                    buttons.append([
-                        InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")
-                    ])
-
-                # Other finished states: Just archive
-                elif status in ("refunded", "cancelled", "expired"):
-                    buttons.append([
-                        InlineKeyboardButton(f"🗄 Archive {oid}", callback_data=f"orderarchive:{oid}")
-                    ])
-
-            txt = "\n".join(lines)
-            buttons.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")])
-            
-            kb = InlineKeyboardMarkup(buttons)
+        orders = storage.list_orders_for_user(uid)
+        if not orders:
+            txt = "📦 *Orders*\n\n_No orders yet._"
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
             return await safe_edit(txt, kb)
+
+        # newest first
+        orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
+
+        lines   = ["📦 *Your Order History*"]
+        buttons = []
+
+        status_emoji = {
+            "pending":           "⏳",
+            "awaiting_payment":  "⏳",
+            "escrow_hold":       "🔒",
+            "shipped":           "🚚",
+            "completed":         "✅",
+            "disputed":          "⚖️",
+            "refunded":          "💰",
+            "cancelled":         "❌",
+            "expired":           "🕰",
+        }
+
+        for o in orders[:12]:                       # cap at 12 to avoid 10-page scroll
+            oid   = o.get("id", "???")
+            item  = o.get("item", "Product")
+            qty   = o.get("qty", 1)
+            amt   = float(o.get("amount", 0))
+            stat  = str(o.get("status", "pending")).lower()
+
+            emoji = status_emoji.get(stat, "❓")
+            lines.append(f"{emoji} `{oid}`  {item} ×{qty}  ‑  *${amt:.2f}*")
+
+            # ----- ACTION ROWS (2 per line) -----
+            row = []
+            # 1. Universal “View / Chat”
+            row.append(InlineKeyboardButton("💬 Chat", callback_data=f"chat:order:{oid}"))
+
+            # 2. Status-specific CTA
+            if stat in ("pending", "awaiting_payment"):
+                row.append(InlineKeyboardButton("❌ Cancel", callback_data=f"ordercancel:{oid}"))
+            elif stat == "escrow_hold":
+                row.append(InlineKeyboardButton("✅ Received", callback_data=f"order_complete:{oid}"))
+            elif stat == "shipped":
+                row.append(InlineKeyboardButton("✅ Received", callback_data=f"order_complete:{oid}"))
+            elif stat == "completed":
+                row.append(InlineKeyboardButton("⚖️ Dispute", callback_data=f"dispute_after:{oid}"))
+            elif stat in ("refunded", "cancelled", "expired"):
+                row.append(InlineKeyboardButton("🗄 Archive", callback_data=f"orderarchive:{oid}"))
+
+            buttons.append(row)
+
+            # 3. Seller-only row (if user is the seller)
+            if int(o.get("seller_id", 0)) == uid:
+                s_row = []
+                if stat == "escrow_hold":
+                    s_row.append(InlineKeyboardButton("📦 Ship", callback_data=f"seller:ship:{oid}"))
+                if stat in ("disputed", "completed", "refunded", "cancelled", "expired"):
+                    s_row.append(InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{oid}"))
+                if s_row:
+                    buttons.append(s_row)
+
+        # ----- NAV -----
+        buttons.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu:orders:main")])
+        kb = InlineKeyboardMarkup(buttons)
+
+        return await safe_edit("\n".join(lines), kb)
 
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))

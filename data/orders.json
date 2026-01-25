@@ -9,7 +9,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768457019,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768620879": {
     "id": "ord_1768620879",
@@ -21,7 +22,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768620879,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768622559": {
     "id": "ord_1768622559",
@@ -33,7 +35,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768622559,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768625532": {
     "id": "ord_1768625532",
@@ -45,7 +48,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768625532,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768803444": {
     "id": "ord_1768803444",
@@ -57,7 +61,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768803444,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768803477": {
     "id": "ord_1768803477",
@@ -69,7 +74,8 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768803477,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
   },
   "ord_1768805130": {
     "id": "ord_1768805130",
@@ -81,6 +87,59 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1768805130,
-    "expired_at": 1768872404
+    "expired_at": 1768872404,
+    "archived_by_1336081032": true
+  },
+  "ord_1769320751": {
+    "id": "ord_1769320751",
+    "item": "blackcap",
+    "qty": 1,
+    "amount": 12.0,
+    "method": "smart_glocal_cart_item",
+    "seller_id": 0,
+    "buyer_id": 1336081032,
+    "status": "expired",
+    "ts": 1769320751,
+    "sku": "blackcap",
+    "inv_qty": 1,
+    "inv_reserved": true,
+    "inv_deducted": false,
+    "cart_child_orders": [
+      "ord_1769320751"
+    ],
+    "expired_at": 1769321856,
+    "archived_by_1336081032": true
+  },
+  "ord_1769320928": {
+    "id": "ord_1769320928",
+    "item": "blackcap",
+    "qty": 1,
+    "amount": 12.0,
+    "method": "redsys_cart_item",
+    "seller_id": 0,
+    "buyer_id": 1336081032,
+    "status": "cancelled",
+    "ts": 1769320928,
+    "sku": "blackcap",
+    "inv_qty": 1,
+    "inv_reserved": false,
+    "inv_deducted": false,
+    "cart_child_orders": [
+      "ord_1769320928"
+    ],
+    "inv_reason": "user_cancelled",
+    "status_reason": "User cancelled",
+    "archived_by_1336081032": true
+  },
+  "ord_1769327387": {
+    "id": "ord_1769327387",
+    "item": "Direct: blackcap",
+    "qty": 1,
+    "amount": 27.0,
+    "method": "Solana",
+    "seller_id": 0,
+    "buyer_id": 1336081032,
+    "status": "pending",
+    "ts": 1769327387
   }
 }
