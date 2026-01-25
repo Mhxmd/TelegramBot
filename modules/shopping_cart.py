@@ -307,10 +307,11 @@ async def view_cart(update, context):
     # ------------------------------
     # PAYMENT OPTIONS
     # ------------------------------
-    rows.append([InlineKeyboardButton("💳 Pay via Stripe (Cart)", callback_data=f"stripe_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🇸🇬 PayNow (Cart)", callback_data=f"paynow_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart")])
+    rows.append([InlineKeyboardButton("💳 Stripe (Cart)", callback_data=f"stripe_cart:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🌐 Smart Glocal (Cart)", callback_data=f"pay_native:smart_glocal:{total:.2f}:cart")])
+    rows.append([InlineKeyboardButton("🇪🇸 Redsys (Cart)", callback_data=f"pay_native:redsys:{total:.2f}:cart")])
+    rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay) (Cart)"   , callback_data=f"hitpay_cart:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL) (Cart)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart")])
 
     # ------------------------------
     # CLEAR + MENU
