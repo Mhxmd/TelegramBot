@@ -166,6 +166,7 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
             InlineKeyboardButton("➕", callback_data=f"cart:addqty:{sku}"),
         ],
         [InlineKeyboardButton("🛒 Go to Cart", callback_data="cart:view")],
+        [InlineKeyboardButton("❌  Remove from cart", callback_data=f"cart:remove:{sku}")],
         [InlineKeyboardButton(
             "🔙 Back",
                 callback_data=(
