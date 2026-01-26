@@ -1,13 +1,22 @@
 {
   "1336081032": {},
   "1435737445": {
-    "hoodie": {
-      "sku": "hoodie",
-      "name": "Hoodie",
-      "price": 30.0,
+    "cat": {
+      "sku": "cat",
+      "name": "Cat Plush",
+      "price": 15.0,
       "qty": 3,
-      "emoji": "\ud83e\udde5",
+      "emoji": "\ud83d\udc31",
       "seller_id": 0
+    },
+    "sku_1336081032_1768966108": {
+      "sku": "sku_1336081032_1768966108",
+      "name": "Plant",
+      "price": 9.99,
+      "qty": 3,
+      "emoji": "\ud83d\udce6",
+      "seller_id": 1336081032
     }
-  }
+  },
+  "795927036": {}
 }

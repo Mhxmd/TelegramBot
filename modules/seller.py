@@ -1,9 +1,11 @@
+from asyncio.log import logger
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram import Update
 from telegram.error import BadRequest 
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest 
+from telegram.ext import ContextTypes
 from modules import shopping_cart, storage
 
 import datetime as _dt
@@ -30,8 +32,9 @@ def build_seller_menu(role: str):
         )
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Add Listing", callback_data="sell:add")],
-            [InlineKeyboardButton("📄 My Listings", callback_data="sell:list")],
-            [InlineKeyboardButton("📈 Analytics", callback_data="analytics:30")],    
+            [InlineKeyboardButton("📄 My Listings", callback_data="sell:list"),
+            InlineKeyboardButton("✏ Update Stock", callback_data="sell:pick_stock")],   # <-- NEW
+            [InlineKeyboardButton("📈 Analytics", callback_data="analytics:30")],
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
 
@@ -101,23 +104,21 @@ async def show_seller_listings(update, context):
             ])
         )
 
-    rows = []
+    rows = []                       # ← initialise list
     for p in items:
         rows.append([
             InlineKeyboardButton(
                 f"{p['name']} — ${p['price']:.2f}",
                 callback_data="noop"
             ),
-            InlineKeyboardButton(
-                "🗑 Remove",
-                callback_data=f"sell:remove_confirm:{p['sku']}"
-            )
+            InlineKeyboardButton("✏ Stock", callback_data=f"sell:stock:{p['sku']}"),
+            InlineKeyboardButton("🗑 Remove", callback_data=f"sell:remove_confirm:{p['sku']}")
         ])
 
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
     await q.edit_message_text(
-        "📄 *My Listings*\n\nSelect a listing to remove:",
+        "📄 *My Listings*\n\nTap ✏ to change stock or 🗑 to remove:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(rows)
     )
@@ -150,7 +151,49 @@ async def show_analytics(update, context, days: int = 30):
         if "message is not modified" in str(e).lower():
             await q.answer()          # acknowledge silently
         else:
-            raise                     # real error, re-raise
+            raise 
+                            # real error, re-raise
+
+# ==========================
+# Update Stock
+# ==========================
+
+async def pick_product_to_update_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    user_id = update.effective_user.id
+    items = storage.list_seller_products(user_id)
+    if not items:
+        return await q.answer("You have no listings to update.", show_alert=True)
+
+    rows = [[InlineKeyboardButton(f"{p['name']} ({p['stock']} left)",
+                                  callback_data=f"sell:stock:{p['sku']}")]
+            for p in items[:8]]  # cap at 8 for neatness
+    rows.append([InlineKeyboardButton("🔙 Seller Center", callback_data="menu:sell")])
+    await q.edit_message_text("📦 *Which item do you want to update?*",
+                              parse_mode=ParseMode.MARKDOWN,
+                              reply_markup=InlineKeyboardMarkup(rows))
+
+async def prompt_update_stock(update: Update, context: ContextTypes.DEFAULT_TYPE, sku: str):
+    q = update.callback_query
+    user_id = update.effective_user.id
+    logger.info(f"[STOCK] uid={user_id} sku={sku}")
+
+    # make sure the seller actually owns this SKU
+    _, prod = storage.get_seller_product_by_sku(sku)
+    if not prod or int(prod.get("seller_id", 0)) != user_id:
+        logger.warning(f"[STOCK] ownership fail prod={prod}")
+        return await q.answer("❌ Not your product.", show_alert=True)
+
+    # store state so the next text message is treated as the new quantity
+    storage.user_flow_state[user_id] = {"phase": "update_stock", "sku": sku}
+
+    await q.edit_message_text(
+        f"📦 Send the *new stock quantity* for `{prod['name']}`:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data="menu:main")
+        ]])
+    )
 
 # ==========================
 # REMOVE LISTING
@@ -244,20 +287,15 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
     msg = update.effective_message
     user_id = update.effective_user.id
     st = storage.user_flow_state.get(user_id)
-
     if not st:
         return
 
-    # STEP 1 — TITLE
+    # ---------- ADD / EDIT LISTING FLOW ----------
     if st["phase"] == "add_title":
         st["title"] = text
         st["phase"] = "add_price"
-        return await msg.reply_text(
-            "💲 Send the *price* (e.g. 19.99):",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        return await msg.reply_text("💲 Send the *price* (e.g. 19.99):", parse_mode=ParseMode.MARKDOWN)
 
-    # STEP 2 — PRICE
     if st["phase"] == "add_price":
         try:
             price = float(text)
@@ -265,15 +303,10 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 raise ValueError
         except ValueError:
             return await msg.reply_text("❌ Invalid price. Please send a number.")
-
         st["price"] = price
         st["phase"] = "add_qty"
-        return await msg.reply_text(
-            "📦 Send the quantity (stock), e.g. 5:",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        return await msg.reply_text("📦 Send the quantity (stock), e.g. 5:", parse_mode=ParseMode.MARKDOWN)
 
-    # STEP 3 — QUANTITY
     if st["phase"] == "add_qty":
         try:
             qty = int(text.strip())
@@ -281,26 +314,42 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 raise ValueError
         except Exception:
             return await msg.reply_text("❌ Invalid quantity. Send a whole number above 0.")
-
         st["qty"] = qty
         st["phase"] = "add_desc"
-        return await msg.reply_text(
-            "📝 Send a short *description*:",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        return await msg.reply_text("📝 Send a short *description*:", parse_mode=ParseMode.MARKDOWN)
 
-    # STEP 4 — DESCRIPTION
     if st["phase"] == "add_desc":
         st["desc"] = text
         st["phase"] = "add_image"
-        return await msg.reply_text(
-            "📸 Send a *picture* of the item (or send /skip to use no image):",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        return await msg.reply_text("📸 Send a *picture* of the item (or send /skip to use no image):", parse_mode=ParseMode.MARKDOWN)
 
-    # STEP 5 — IMAGE (final)
+    # ---------- UPDATE STOCK (standalone) ----------
+    if st["phase"] == "update_stock":
+        try:
+            new_qty = int(text.strip())
+            if new_qty < 0:
+                raise ValueError
+        except ValueError:
+            return await msg.reply_text("❌ Send a whole number ≥ 0.")
+
+        sku   = st["sku"]
+        title = storage.get_any_product_by_sku(sku).get("name", sku)
+        storage.set_seller_stock(sku, new_qty)
+        storage.user_flow_state.pop(user_id, None)          # clear state
+
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")
+        ]])
+        await msg.reply_text(
+            f"✅ *Stock updated*\n\n"
+            f"📦 *{title}* now has *{new_qty}* units.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb
+        )
+        return   # flow finished
+
+    # ---------- ADD IMAGE (final step of listing) ----------
     if st["phase"] == "add_image":
-        # accept EITHER a photo OR the text "/skip"
         if update.effective_message.photo:
             st["image_url"] = update.effective_message.photo[-1].file_id
         elif text and text.lower() == "/skip":
@@ -308,7 +357,6 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             return await msg.reply_text("Please send a photo or type /skip.")
 
-        # ----- read data BEFORE destroying state -----
         title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
         image_url = st.get("image_url")
 
@@ -319,14 +367,11 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await msg.reply_text(f"❌ Failed to add product: {exc}")
             return
 
-        # now safe to destroy state
         storage.user_flow_state.pop(user_id, None)
-
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")],
-            [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop")],
+            [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop")]
         ])
-
         await msg.reply_text(
             f"✅ *Listing Added!*\n\n"
             f"• *Title:* {title}\n"
