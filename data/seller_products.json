@@ -4,7 +4,7 @@
       "sku": "cat",
       "name": "Cat Plush",
       "price": 15,
-      "emoji": "\ud83d\udc31",
+      "emoji": "🐱",
       "seller_id": 0,
       "desc": "Built-in item",
       "stock": 999,
@@ -15,7 +15,7 @@
       "sku": "hoodie",
       "name": "Hoodie",
       "price": 30,
-      "emoji": "\ud83e\udde5",
+      "emoji": "🧥",
       "seller_id": 0,
       "desc": "Built-in item",
       "stock": 999,
@@ -26,7 +26,7 @@
       "sku": "blackcap",
       "name": "Black Cap",
       "price": 12,
-      "emoji": "\ud83e\udde2",
+      "emoji": "🧢",
       "seller_id": 0,
       "desc": "Built-in item",
       "stock": 998,
@@ -41,7 +41,7 @@
       "price": 9.99,
       "desc": "A plant to decorate the house",
       "stock": 10,
-      "emoji": "\ud83d\udce6",
+      "emoji": "📦",
       "seller_id": 1336081032,
       "hidden": false,
       "created_ts": 1768966108
@@ -52,7 +52,7 @@
       "price": 1.0,
       "desc": "The GOAT",
       "stock": 1,
-      "emoji": "\ud83d\udce6",
+      "emoji": "📦",
       "seller_id": 1336081032,
       "image_url": "AgACAgUAAxkBAAILQ2lweQ_X9Bss9iRylG3SSDa91_RvAAKbDWsbj96IV59hnapittcgAQADAgADbQADOAQ",
       "hidden": false,
@@ -64,7 +64,7 @@
       "price": 1.0,
       "desc": "gary",
       "stock": 4,
-      "emoji": "\ud83d\udce6",
+      "emoji": "📦",
       "seller_id": 1336081032,
       "image_url": "AgACAgUAAxkBAAIMo2l1yilYnGvEqNCtZIbMiB5P49T1AAJQDmsbos2wV0gjF-K-AuX-AQADAgADbQADOAQ",
       "hidden": false,
@@ -76,11 +76,25 @@
       "price": 6.0,
       "desc": "yogurt",
       "stock": 7,
-      "emoji": "\ud83d\udce6",
+      "emoji": "📦",
       "seller_id": 1336081032,
       "image_url": null,
       "hidden": false,
       "created_ts": 1769394114
+    }
+  ],
+  "1576365386": [
+    {
+      "sku": "sku_1576365386_1769408436",
+      "name": "Basketball",
+      "price": 20.0,
+      "desc": "It's a basketball",
+      "stock": 5,
+      "emoji": "📦",
+      "seller_id": 1576365386,
+      "image_url": "AgACAgUAAxkBAAIN_ml3Bt0o8ewD4wKaAcX7Zz2h_JR6AALEFWsbb4O5V2Uu4osDtu4_AQADAgADbQADOAQ",
+      "hidden": false,
+      "created_ts": 1769408436
     }
   ]
 }
