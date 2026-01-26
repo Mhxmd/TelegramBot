@@ -785,6 +785,20 @@ async def create_hitpay_cart_checkout(update, context, total):
     user_id = update.effective_user.id
     total = float(total)
 
+    # Re-check entire cart before starting HitPay cart checkout
+    cart = shopping_cart.get_user_cart(user_id)
+    if not cart:
+        return await q.answer("Cart is empty.", show_alert=True)
+
+    for sku, item in cart.items():
+        qty = int(item.get("qty", 1) or 1)
+        ok, stock_left = inventory.check_stock(sku, qty)
+        if not ok:
+            return await q.answer(
+                f"❌ {sku}: only {stock_left} left. Reduce quantity first.",
+                show_alert=True
+            )
+        
     # 1) Create a cart order first (single order_id)
     order_id = storage.add_order(
         buyer_id=user_id,

@@ -4,7 +4,7 @@
 
 import json
 import os
-import inventory
+from modules import inventory
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from modules import storage
 
@@ -89,6 +89,13 @@ def add_to_cart(uid, sku):
     if not product:
         return False
 
+    current_qty = int(cart.get(sku, {}).get("qty", 0))
+    desired_qty = current_qty + 1
+
+    ok, stock_left = inventory.check_stock(sku, desired_qty)
+    if not ok:
+        return False
+
     if sku not in cart:
         cart[sku] = {
             "sku": sku,
@@ -96,10 +103,10 @@ def add_to_cart(uid, sku):
             "price": float(product["price"]),
             "qty": 1,
             "emoji": product.get("emoji", "🛍️"),
-            "seller_id": product.get("seller_id", 0)
+            "seller_id": product.get("seller_id", 0),
         }
     else:
-        cart[sku]["qty"] += 1
+        cart[sku]["qty"] = desired_qty
 
     save_user_cart(uid, cart)
     return True
@@ -111,7 +118,7 @@ def update_quantity(uid, sku, q):
         if q <= 0:
             del cart[sku]
         else:
-            cart[sku]["qty"] = q
+            cart[sku]["qty"] = int(q)
     save_user_cart(uid, cart)
 
 
@@ -125,9 +132,20 @@ def remove_from_cart(uid, sku):
 # ------------------------------------------
 # ADD ITEM HANDLER
 # ------------------------------------------
+
 async def add_item(update, context, sku):
+    q = update.callback_query
     uid = update.effective_user.id
-    add_to_cart(uid, sku)
+
+    ok = add_to_cart(uid, sku)
+    if not ok:
+        # get current stock to show correct number
+        cart = get_user_cart(uid)
+        current_qty = int(cart.get(sku, {}).get("qty", 0))
+        _, stock_left = inventory.check_stock(sku, current_qty + 1)
+        await q.answer(f"❌ Not enough stock. {stock_left} left.", show_alert=True)
+        return False
+
     return True
 
 
@@ -203,49 +221,50 @@ async def change_quantity(update, context, sku, delta):
     if sku not in cart:
         return await view_cart(update, context)
 
-    new_qty = cart[sku]["qty"] + delta
+    current_qty = int(cart[sku].get("qty", 0))
+    new_qty = current_qty + int(delta)
 
-    # ------------------------------------------------------
-    # CASE 1: QUANTITY DROPPED TO ZERO → ITEM REMOVED
-    # ------------------------------------------------------
+    # remove
     if new_qty <= 0:
         remove_from_cart(uid, sku)
 
-        source = context.user_data.get("mini_source", "shop")
-
-        # Mini panel sources
         if _is_mini_panel(q.message.text or ""):
-
-            if source == "cart":
-                return await view_cart(update, context)
+            source = context.user_data.get("mini_source", "shop")
 
             if source == "view":
                 from modules import ui
                 return await ui.view_item_details(update, context, sku)
 
-            # default = shop
+            if source == "cart":
+                return await view_cart(update, context)
+
             from modules import ui
             txt, kb = ui.build_shop_keyboard(uid)
             return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
 
-        # Not mini panel → normal cart return
         return await view_cart(update, context)
+    
 
+    # enforce stock when increasing
+    if int(delta) > 0:
+        ok, stock_left = inventory.check_stock(sku, new_qty)
+        if not ok:
+            await q.answer(f"❌ Not enough stock. {stock_left} left.", show_alert=True)
 
-    # ------------------------------------------------------
-    # CASE 2: NORMAL QUANTITY UPDATE
-    # ------------------------------------------------------
+            if _is_mini_panel(q.message.text or ""):
+                source = context.user_data.get("mini_source", "shop")
+                return await show_add_to_cart_feedback(update, context, sku, source=source)
+
+            return await view_cart(update, context)
+
+    # apply through the guarded setter
     update_quantity(uid, sku, new_qty)
 
-    # Inside mini panel → refresh mini panel (NOT view cart)
     if _is_mini_panel(q.message.text or ""):
         source = context.user_data.get("mini_source", "shop")
         return await show_add_to_cart_feedback(update, context, sku, source=source)
 
-    # Not mini panel → update cart normally
     return await view_cart(update, context)
-
-
 
 # ------------------------------------------
 # VIEW CART (BIG BUTTON UI — CLEAN VERSION)
@@ -352,43 +371,4 @@ async def clear_all(update, context):
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
     )
-
-async def add_item(update, context, sku: str):
-    user_id = update.effective_user.id
-    cart = get_cart(user_id)  # dict sku -> {qty, ...}
-
-    current_qty = int(cart.get(sku, {}).get("qty", 0))
-    desired_qty = current_qty + 1
-
-    ok, stock_left = inventory.check_stock(sku, desired_qty)
-    if not ok:
-        await update.callback_query.answer(
-            f"❌ Not enough stock. {stock_left} left.",
-            show_alert=True
-        )
-        return
     
-async def change_quantity(update, context, sku: str, delta: int):
-    user_id = update.effective_user.id
-    cart = get_cart(user_id)
-
-    current_qty = int(cart.get(sku, {}).get("qty", 0))
-    new_qty = current_qty + delta
-
-    if new_qty < 1:
-        # your existing remove logic
-        remove_from_cart(user_id, sku)
-        return await view_cart(update, context)
-
-    if delta > 0:
-        ok, stock_left = inventory.check_stock(sku, new_qty)
-        if not ok:
-            await update.callback_query.answer(
-                f"❌ Not enough stock. {stock_left} left.",
-                show_alert=True
-            )
-            return
-
-    cart[sku]["qty"] = new_qty
-    save_cart(user_id, cart)   # whatever your project uses
-    return await view_cart(update, context)
