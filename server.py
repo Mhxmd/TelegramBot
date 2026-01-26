@@ -1,5 +1,6 @@
 import os
 import pathlib
+from time import time
 from dotenv import load_dotenv
 import requests
 import json
@@ -80,8 +81,8 @@ def save_json(path: pathlib.Path, data):
 # ❤️ HEALTH CHECK
 # ============================================================
 @app.get("/health")
-async def health():
-    return {"ok": True}
+def health():
+    return {"status": "ok", "ts": time.time()}
 
 # ============================================================
 # 🌐 PAYMENT PAGES

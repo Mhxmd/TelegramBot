@@ -80,8 +80,10 @@ def load_json(path: str):
 
 def save_json(path: str, data):
     _ensure_parent_dir(path)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)   
 
 # =========================================================
 # SEED BUILT-IN PRODUCTS INTO SELLER_PRODUCTS (ONCE)
