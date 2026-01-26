@@ -793,20 +793,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = msg.from_user.id
     text = (msg.text or "").strip()
     storage.ensure_user_exists(uid, update.effective_user.username)
-
-    # --- single state lookup used everywhere below ---
     st = storage.user_flow_state.get(uid)
+    print(f"[DEBUG] uid={uid}  text={text!r}  phase={storage.user_flow_state.get(uid, {}).get('phase')}")
 
-    # 0. SELLER ADD-LISTING FLOW (must be first)
+    # 0a. SELLER – “add_image” phase (photo OR /skip text)  <<<<<< NEW
+    if st and st.get("phase") == "add_image":
+        # pass text if it’s a “/skip” message, None if it’s a photo
+        return await seller.handle_seller_flow(update, context,
+                                             text if text else None)
+
+    # 0b. REST of seller flow (title/price/qty/desc)
     if seller.is_in_seller_flow(uid):
         return await seller.handle_seller_flow(update, context, text)
 
-    # 1. PHOTO UPLOAD (only for seller image step)
+    # 1. PHOTO – no more seller photo handling after this point
     if msg.photo:
-        if st and st.get("phase") == "add_image":
-            # let handle_seller_flow deal with the photo
-            return await seller.handle_seller_flow(update, context, None)
-        # other photo handlers can stay here if you need them
         return
 
     # 2. TEXT INPUT
@@ -842,10 +843,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             return await msg.reply_text("Please send a photo or type /skip.")
 
-        # ----- create product -----
+        # ----- read data BEFORE destroying state -----
         title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
         image_url = st.get("image_url")
-        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+
+        try:
+            sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+        except Exception as exc:
+            logger.exception("add_seller_product failed")
+            await msg.reply_text(f"❌ Failed to add product: {exc}")
+            return
+
+        # now safe to destroy state
         storage.user_flow_state.pop(user_id, None)
 
         kb = InlineKeyboardMarkup([
@@ -866,6 +875,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
 
+
+# ---------- CATCH-ALL COMMAND (lets /skip through) ----------
+async def catch_all_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    # if user is in seller flow, treat the command as plain text
+    if seller.is_in_seller_flow(uid):
+        return await handle_message(update, context)   # re-use the same router
+    # otherwise ignore unknown commands
+    await update.effective_message.reply_text("❓ Unknown command.")
+
+
 # ==========================
 # MAIN
 # ==========================
@@ -875,26 +895,29 @@ def main():
         return
     
     storage.seed_builtin_products_once()
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Mandatory Payment Logic Handlers (Pre-checkout and Success)
+    # 1. payment handlers
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # Standard Commands
+    # 2. specific commands  (MUST be first)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop_cmd))
-    
-    # The Router handles all menu clicks (including pay_native)
+
+    # 3. callback router
     app.add_handler(CallbackQueryHandler(callback_router))
-    
-    # General Message Handlers
+
+    # 4. catch-all commands  (AFTER specific ones)
+    app.add_handler(MessageHandler(filters.COMMAND, catch_all_commands))
+
+    # 5. plain text / photo
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_message))
 
     print("🤖 Bot running... Tokens loaded from .env")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()

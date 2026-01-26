@@ -272,7 +272,7 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "📦 Send the quantity (stock), e.g. 5:",
             parse_mode=ParseMode.MARKDOWN
         )
-    
+
     # STEP 3 — QUANTITY
     if st["phase"] == "add_qty":
         try:
@@ -300,18 +300,26 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     # STEP 5 — IMAGE (final)
     if st["phase"] == "add_image":
-        # text fallback for /skip
-        if text and text.lower() == "/skip":
-            st["image_url"] = None
-        elif update.effective_message.photo:
+        # accept EITHER a photo OR the text "/skip"
+        if update.effective_message.photo:
             st["image_url"] = update.effective_message.photo[-1].file_id
+        elif text and text.lower() == "/skip":
+            st["image_url"] = None
         else:
             return await msg.reply_text("Please send a photo or type /skip.")
 
-        # ----- create product -----
+        # ----- read data BEFORE destroying state -----
         title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
         image_url = st.get("image_url")
-        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+
+        try:
+            sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+        except Exception as exc:
+            logger.exception("add_seller_product failed")
+            await msg.reply_text(f"❌ Failed to add product: {exc}")
+            return
+
+        # now safe to destroy state
         storage.user_flow_state.pop(user_id, None)
 
         kb = InlineKeyboardMarkup([
@@ -328,7 +336,6 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             parse_mode="Markdown",
             reply_markup=kb
         )
-    
 
 # ==========================
 # SELLER REGISTRATION

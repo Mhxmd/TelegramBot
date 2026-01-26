@@ -69,6 +69,18 @@
       "image_url": "AgACAgUAAxkBAAIMo2l1yilYnGvEqNCtZIbMiB5P49T1AAJQDmsbos2wV0gjF-K-AuX-AQADAgADbQADOAQ",
       "hidden": false,
       "created_ts": 1769327145
+    },
+    {
+      "sku": "sku_1336081032_1769394114",
+      "name": "yogurt",
+      "price": 6.0,
+      "desc": "yogurt",
+      "stock": 7,
+      "emoji": "\ud83d\udce6",
+      "seller_id": 1336081032,
+      "image_url": null,
+      "hidden": false,
+      "created_ts": 1769394114
     }
   ]
 }

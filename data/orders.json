@@ -139,7 +139,8 @@
     "method": "Solana",
     "seller_id": 0,
     "buyer_id": 1336081032,
-    "status": "pending",
-    "ts": 1769327387
+    "status": "expired",
+    "ts": 1769327387,
+    "expired_at": 1769391372
   }
 }
