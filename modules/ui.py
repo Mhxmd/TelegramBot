@@ -410,6 +410,16 @@ async def stripe_cart_checkout(update, context, total_str):
     # Build items list
     items = [{"sku": sku, "qty": int(item.get("qty", 1) or 1)} for sku, item in cart.items()]
 
+    for i in items:
+        sku = i["sku"]
+        qty = i["qty"]
+        ok, stock_left = inventory.check_stock(sku, qty)
+        if not ok:
+            return await q.answer(
+                f"❌ {sku}: only {stock_left} left. Reduce quantity first.",
+                show_alert=True
+            )
+
     # Create order first
     order_id = storage.add_order(
         buyer_id=uid,

@@ -4,6 +4,7 @@
 
 import json
 import os
+import inventory
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from modules import storage
 
@@ -350,3 +351,43 @@ async def clear_all(update, context):
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
     )
+
+async def add_item(update, context, sku: str):
+    user_id = update.effective_user.id
+    cart = get_cart(user_id)  # dict sku -> {qty, ...}
+
+    current_qty = int(cart.get(sku, {}).get("qty", 0))
+    desired_qty = current_qty + 1
+
+    ok, stock_left = inventory.check_stock(sku, desired_qty)
+    if not ok:
+        await update.callback_query.answer(
+            f"❌ Not enough stock. {stock_left} left.",
+            show_alert=True
+        )
+        return
+    
+async def change_quantity(update, context, sku: str, delta: int):
+    user_id = update.effective_user.id
+    cart = get_cart(user_id)
+
+    current_qty = int(cart.get(sku, {}).get("qty", 0))
+    new_qty = current_qty + delta
+
+    if new_qty < 1:
+        # your existing remove logic
+        remove_from_cart(user_id, sku)
+        return await view_cart(update, context)
+
+    if delta > 0:
+        ok, stock_left = inventory.check_stock(sku, new_qty)
+        if not ok:
+            await update.callback_query.answer(
+                f"❌ Not enough stock. {stock_left} left.",
+                show_alert=True
+            )
+            return
+
+    cart[sku]["qty"] = new_qty
+    save_cart(user_id, cart)   # whatever your project uses
+    return await view_cart(update, context)
