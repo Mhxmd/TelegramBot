@@ -141,6 +141,22 @@
     "buyer_id": 1336081032,
     "status": "expired",
     "ts": 1769327387,
-    "expired_at": 1769391372
+    "expired_at": 1769391372,
+    "archived_by_1336081032": true
+  },
+  "ord_1769394374": {
+    "id": "ord_1769394374",
+    "item": "blackcap",
+    "qty": 1,
+    "amount": 12.0,
+    "method": "smart_glocal",
+    "seller_id": 0,
+    "buyer_id": 1336081032,
+    "status": "completed",
+    "ts": 1769394374,
+    "sku": "blackcap",
+    "inv_qty": 1,
+    "inv_reserved": false,
+    "inv_deducted": true
   }
 }

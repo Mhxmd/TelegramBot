@@ -301,8 +301,13 @@ async def seller_ship_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def buyer_mark_received(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
+    # 1. add the timestamp directly
+    orders = storage.load_json(storage.ORDERS_FILE)
+    orders[order_id]["received_ts"] = int(time.time())
+    storage.save_json(storage.ORDERS_FILE, orders)
+
+    # 2. update status only
     storage.update_order_status(order_id, "completed")
-    storage.update_order_meta(order_id, {"received_ts": int(time.time())})
     await q.edit_message_text("✅ You confirmed delivery. Funds released to seller!")
 
 # --------------------------------------------------
@@ -399,6 +404,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = (q.data or "").strip()
     # Define user_id so it's available for all logic below
     user_id = update.effective_user.id
+
+    print(f"[CB] uid={user_id}  data={data!r}")   # 
 
     try:
         await q.answer()
@@ -564,6 +571,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("order_dispute_init:"):
             oid = data.split(":")[1]
             return await ui.file_order_dispute(update, context, oid)
+        
+        # ----- POST-COMPLETION DISPUTE -----
+        if data.startswith("dispute_after:"):
+            _, oid = data.split(":", 1)
+            return await ui.handle_post_completion_dispute(update, context, oid)
 
         # ==========================
         # CART SYSTEM
@@ -768,7 +780,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ADMIN
         if data == "admin:disputes":
-            return await ui.admin_open_disputes(update, context)
+            return await ui.admin_dispute_dashboard(update, context)
 
         if data.startswith("admin_refund:"):
             oid = data.split(":")[1]
