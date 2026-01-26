@@ -6,6 +6,8 @@ import json
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from modules import storage
+from typing import Optional
+
 
 CART_FILE = storage.CART_FILE
 SELLER_PRODUCTS_FILE = storage.SELLER_PRODUCTS_FILE
@@ -20,7 +22,8 @@ BUILTIN_PRODUCTS = {
     "blackcap": {"sku": "blackcap", "name": "Black Cap", "price": 12, "emoji": "🧢", "seller_id": 0},
 }
 
-def load_all_products(viewer_id: int | None = None):
+def load_all_products(viewer_id: Optional[int] = None):
+
     """
     Returns dict sku -> product.
     If viewer_id is supplied, adds 'is_own' flag so UI can hide buy buttons.
@@ -284,7 +287,12 @@ async def view_cart(update, context):
         total += subtotal
         
         # Build pretty text for the big product button
-        btn_text = f"{emoji} {name} — {qty} × ${price:.2f} = ${subtotal:.2f}"
+        btn_text = (
+            f"{emoji} *{name}*\n"
+            f"Qty: {qty} • ${price:.2f} each\n"
+            f"Subtotal: ${subtotal:.2f}"
+                   )
+
 
         # Store where mini-panel should return
         context.user_data["mini_source"] = "cart"
