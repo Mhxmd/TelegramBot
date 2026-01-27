@@ -1,5 +1,5 @@
 # ==========================================
-# SHOPPING CART (FULLY STABLE VERSION)
+# SHOPPING CART (CLEAN-VIEW VERSION)
 # ==========================================
 
 import json
@@ -24,7 +24,6 @@ BUILTIN_PRODUCTS = {
 }
 
 def load_all_products(viewer_id: Optional[int] = None):
-
     """
     Returns dict sku -> product.
     If viewer_id is supplied, adds 'is_own' flag so UI can hide buy buttons.
@@ -135,14 +134,12 @@ def remove_from_cart(uid, sku):
 # ------------------------------------------
 # ADD ITEM HANDLER
 # ------------------------------------------
-
 async def add_item(update, context, sku):
     q = update.callback_query
     uid = update.effective_user.id
 
     ok = add_to_cart(uid, sku)
     if not ok:
-        # get current stock to show correct number
         cart = get_user_cart(uid)
         current_qty = int(cart.get(sku, {}).get("qty", 0))
         _, stock_left = inventory.check_stock(sku, current_qty + 1)
@@ -153,23 +150,19 @@ async def add_item(update, context, sku):
 
 
 # ------------------------------------------
-# MINI PANEL 
+# MINI PANEL
 # ------------------------------------------
 def _is_mini_panel(text):
     return text and "Added to cart!" in text
 
 
 async def show_add_to_cart_feedback(update, context, sku, source="shop"):
-
     q = update.callback_query
     uid = update.effective_user.id
-    
     context.user_data["mini_source"] = source
-
 
     cart = get_user_cart(uid)
     item = cart.get(sku)
-
     if not item:
         from modules import ui
         txt, kb = ui.build_shop_keyboard(uid)
@@ -179,7 +172,12 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
     price = float(item["price"])
     subtotal = price * qty
 
-    # UI Buttons
+    text = (
+        f"✔ *Added to cart!* {item['name']}\n"
+        f"Qty: *{qty}*\n"
+        f"💵 Price: `${price:.2f}` × {qty} = *${subtotal:.2f}*"
+    )
+
     kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("➖", callback_data=f"cart:subqty:{sku}"),
@@ -190,27 +188,20 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
         [InlineKeyboardButton("❌  Remove from cart", callback_data=f"cart:remove:{sku}")],
         [InlineKeyboardButton(
             "🔙 Back",
-                callback_data=(
-                     "cart:view" if source == "cart"
-                         else "menu:shop" if source == "shop"
-                            else f"view_item:{sku}"))]
-
-
+            callback_data=(
+                "cart:view" if source == "cart"
+                else "menu:shop" if source == "shop"
+                else f"view_item:{sku}"
+            )
+        )]
     ])
 
-    # Mini Panel Text
-    text = (
-        f"✔ *Added to cart!* {item['name']}\n"
-        f"Qty: *{qty}*\n"
-        f"💵 Price: `${price:.2f}` × {qty} = *${subtotal:.2f}*"
-    )
-
-    return await q.edit_message_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=kb
-    )
-
+    try:
+        return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            return await q.answer()
+        raise
 
 
 # ------------------------------------------
@@ -227,40 +218,27 @@ async def change_quantity(update, context, sku, delta):
     current_qty = int(cart[sku].get("qty", 0))
     new_qty = current_qty + int(delta)
 
-    # remove
-    if new_qty <= 0:
-        remove_from_cart(uid, sku)
-
-        if _is_mini_panel(q.message.text or ""):
-            source = context.user_data.get("mini_source", "shop")
-
-            if source == "view":
-                from modules import ui
-                return await ui.view_item_details(update, context, sku)
-
-            if source == "cart":
-                return await view_cart(update, context)
-
-            from modules import ui
-            txt, kb = ui.build_shop_keyboard(uid)
-            return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
-
-        return await view_cart(update, context)
-    
-
-    # enforce stock when increasing
+    # stop at stock limit
     if int(delta) > 0:
         ok, stock_left = inventory.check_stock(sku, new_qty)
         if not ok:
-            await q.answer(f"❌ Not enough stock. {stock_left} left.", show_alert=True)
+            await q.answer(f"⚠️ Maximum reached! Only {stock_left} in stock.", show_alert=True)
+            return
 
-            if _is_mini_panel(q.message.text or ""):
-                source = context.user_data.get("mini_source", "shop")
-                return await show_add_to_cart_feedback(update, context, sku, source=source)
+    if new_qty <= 0:
+        remove_from_cart(uid, sku)
+        if _is_mini_panel(q.message.text or ""):
+            source = context.user_data.get("mini_source", "shop")
+            if source == "view":
+                from modules import ui
+                return await ui.view_item_details(update, context, sku)
+            if source == "cart":
+                return await view_cart(update, context)
+            from modules import ui
+            txt, kb = ui.build_shop_keyboard(uid)
+            return await q.edit_message_text(txt, reply_markup=kb, parse_mode="Markdown")
+        return await view_cart(update, context)
 
-            return await view_cart(update, context)
-
-    # apply through the guarded setter
     update_quantity(uid, sku, new_qty)
 
     if _is_mini_panel(q.message.text or ""):
@@ -269,15 +247,16 @@ async def change_quantity(update, context, sku, delta):
 
     return await view_cart(update, context)
 
+
 # ------------------------------------------
-# VIEW CART (BIG BUTTON UI — CLEAN VERSION)
+# VIEW CART (CLEAN-VIEW VERSION)
 # ------------------------------------------
 async def view_cart(update, context):
     q = update.callback_query
     uid = update.effective_user.id
     cart = get_user_cart(uid)
 
-    # If empty
+    # empty cart
     if not cart:
         return await q.edit_message_text(
             "🛒 *Your cart is empty.*",
@@ -288,80 +267,57 @@ async def view_cart(update, context):
             ])
         )
 
-    rows = []
-    total = 0
+    rows   = []
+    total  = 0
 
-    # ------------------------------
-    # TITLE + TOTAL
-    # ------------------------------
-    header_text = "🛒 *Your Cart*\n"
-    
-    # ------------------------------
-    # BUILD PRODUCT BUTTONS
-    # ------------------------------
+    # build product rows
     for sku, item in cart.items():
-        emoji = item.get("emoji", "🛒")
-        name = item["name"]
-        price = float(item["price"])
-        qty = item["qty"]
-        subtotal = price * qty
-        total += subtotal
-        
-        # Build pretty text for the big product button
+        emoji      = item.get("emoji", "🛒")
+        name       = item["name"]
+        price      = float(item["price"])
+        qty        = item["qty"]
+        subtotal   = price * qty
+        total     += subtotal
+
         btn_text = (
             f"{emoji} *{name}*\n"
             f"Qty: {qty} • ${price:.2f} each\n"
             f"Subtotal: ${subtotal:.2f}"
-                   )
+        )
 
-
-        # Store where mini-panel should return
-        context.user_data["mini_source"] = "cart"
-
-        # VERY SMALL remove button
-        small_x = "✖️\u200b"
-
-        # Big button (go to mini panel) + tiny ❌
         rows.append([
             InlineKeyboardButton(btn_text, callback_data=f"cart:edit:{sku}:cart"),
-            InlineKeyboardButton(small_x, callback_data=f"cart:remove:{sku}")
-                ])
+            InlineKeyboardButton("✖️", callback_data=f"cart:remove:{sku}")
+        ])
 
+    # total line
+    header = f"🛒 *Your Cart*\n💰 *Total:* ${total:.2f}"
 
-    # ------------------------------
-    # TOTAL LINE
-    # ------------------------------
-    header_text += f"💰 *Total:* `${total:.2f}`"
-
-    # ------------------------------
-    # PAYMENT OPTIONS
-    # ------------------------------
+    # payment buttons
     rows.append([InlineKeyboardButton("💳 Stripe (Cart)", callback_data=f"stripe_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🌐 Smart Glocal (Cart)", callback_data=f"smart_glocal_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🇪🇸 Redsys (Cart)",     callback_data=f"redsys_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay) (Cart)"   , callback_data=f"hitpay_cart:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🇪🇸 Redsys (Cart)", callback_data=f"redsys_cart:{total:.2f}")])
+    rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay) (Cart)", callback_data=f"hitpay_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL) (Cart)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart")])
 
-    # ------------------------------
-    # CLEAR + MENU
-    # ------------------------------
+    # footer
     rows.append([InlineKeyboardButton("🧹 Clear All", callback_data="cart:clear_all")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
 
     return await q.edit_message_text(
-        header_text,
+        header,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(rows)
     )
 
 
-
-
-# This is related to solana payment
-
+# ------------------------------------------
+# SOLANA-HELPER
+# ------------------------------------------
 def get_cart(user_id):
     """Cart dict for solana/cart flows: {sku: {..item..}}"""
     return get_user_cart(user_id)
+
 
 # ------------------------------------------
 # CLEAR ALL
@@ -379,4 +335,3 @@ async def clear_all(update, context):
             [InlineKeyboardButton("🏠 Menu", callback_data="menu:main")]
         ])
     )
-    

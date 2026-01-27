@@ -23,26 +23,16 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 # MODULES IMPORT
 # ==========================
 from modules import storage, ui, chat, seller, shopping_cart, inventory
-from modules import wallet_utils as wallet  # <--- MUST HAVE "as wallet"
+from modules import wallet_utils as wallet# <--- MUST HAVE "as wallet"
 
 # ==========================
 # Logging
 # ==========================
-import logging, json, sys
-class JSONFormatter(logging.Formatter):
-    def format(self, record):
-        return json.dumps({
-            "ts": record.created,
-            "lvl": record.levelname,
-            "mod": record.name,
-            "msg": record.getMessage(),
-            "uid": getattr(record, "uid", None),
-            "sku": getattr(record, "sku", None),
-        })
-h = logging.StreamHandler(sys.stdout)
-h.setFormatter(JSONFormatter())
-logging.getLogger().addHandler(h)
-logging.getLogger().setLevel(logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger("marketbot")
 
 
 # ==========================
@@ -311,13 +301,8 @@ async def seller_ship_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def buyer_mark_received(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
-    # 1. add the timestamp directly
-    orders = storage.load_json(storage.ORDERS_FILE)
-    orders[order_id]["received_ts"] = int(time.time())
-    storage.save_json(storage.ORDERS_FILE, orders)
-
-    # 2. update status only
     storage.update_order_status(order_id, "completed")
+    storage.update_order_meta(order_id, {"received_ts": int(time.time())})
     await q.edit_message_text("✅ You confirmed delivery. Funds released to seller!")
 
 # --------------------------------------------------
@@ -414,10 +399,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = (q.data or "").strip()
     # Define user_id so it's available for all logic below
     user_id = update.effective_user.id
-    if storage.is_spamming(user_id, cooldown=0.8):
-        return await q.answer("⏳ Please slow down.", show_alert=True)
-    
-    print(f"[CB] uid={user_id}  data={data!r}")   # 
+
+    logger.info("👉 callback data = %s", data)
 
     try:
         await q.answer()
@@ -481,10 +464,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             storage.toggle_product_visibility(sku) 
             # Refresh the seller's listing view
             return await seller.show_seller_listings(update, context)
-        
-        elif data.startswith("sell:stock:"):
-            sku = data.split(":", 2)[2]        # takes everything AFTER second colon
-            return await seller.prompt_update_stock(update, context, sku)
+
         # ORDER CANCEL (pending)
         if data.startswith("ordercancel:"):
             _, oid = data.split(":", 1)
@@ -586,11 +566,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("order_dispute_init:"):
             oid = data.split(":")[1]
             return await ui.file_order_dispute(update, context, oid)
-        
-        # ----- POST-COMPLETION DISPUTE -----
-        if data.startswith("dispute_after:"):
-            _, oid = data.split(":", 1)
-            return await ui.handle_post_completion_dispute(update, context, oid)
 
         # ==========================
         # CART SYSTEM
@@ -637,7 +612,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("stripe_cart:"):
             _, total = data.split(":")
-            return await handle_stripe_cart_checkout(update, context, total)
+            return await ui.stripe_cart_checkout(update, context, float(total))  # Use ui. not handle_
 
         if data.startswith("paynow_cart:"):
             _, total = data.split(":")
@@ -673,6 +648,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=kb
             )
+        
+                # NEW: user picked a network
+
+        # ---------- WITHDRAW (dual-network) ----------
+        if data.startswith("withdraw:"):
+            logger.info("✅ WITHDRAW HANDLER TRIGGERED: %s", data)
+            try:
+                return await wallet.handle_withdraw_choice(update, context)
+            except Exception as e:
+                logger.exception("❌ Withdraw UI crash")
+                await q.answer(f"Withdraw error: {e}", show_alert=True)
+                return
             
         # --- CRYPTO EXECUTION (PHASE 2: SENDING) ---
         if data.startswith("confirm_crypto_pay:"):
@@ -740,9 +727,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "sell:register":
             return await seller.register_seller(update, context)
 
-        if data == "sell:pick_stock":
-            return await seller.pick_product_to_update_stock(update, context)
-
         if data.startswith("captcha:"):
             uid = update.effective_user.id
             answer = data.split(":")[1]
@@ -798,7 +782,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ADMIN
         if data == "admin:disputes":
-            return await ui.admin_dispute_dashboard(update, context)
+            return await ui.admin_open_disputes(update, context)
 
         if data.startswith("admin_refund:"):
             oid = data.split(":")[1]
@@ -822,20 +806,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = msg.from_user.id
     text = (msg.text or "").strip()
-
-    if len(text) > 800:
-        return await msg.reply_text("🛑 Message too long (max 800 chars).")
     storage.ensure_user_exists(uid, update.effective_user.username)
 
-    # === 1.  SELLER FLOW (all phases handled in seller.py) ===
+    # --- single state lookup used everywhere below ---
+    st = storage.user_flow_state.get(uid)
+
+    # 0. SELLER ADD-LISTING FLOW (must be first)
     if seller.is_in_seller_flow(uid):
         return await seller.handle_seller_flow(update, context, text)
 
-    # === 2.  PHOTO – only accepted inside seller flow ===
+    # 1. PHOTO UPLOAD (only for seller image step)
     if msg.photo:
-        return   # ignore photos outside seller flow
+        if st and st.get("phase") == "add_image":
+            # let handle_seller_flow deal with the photo
+            return await seller.handle_seller_flow(update, context, None)
+        # other photo handlers can stay here if you need them
+        return
 
-    # === 3.  SEARCH MODE ===
+    # 2. TEXT INPUT
+    if not text:
+        return
+
+    # 3. SEARCH MODE
     search_mode = context.user_data.get("awaiting_search")
     if search_mode:
         context.user_data["awaiting_search"] = None
@@ -848,29 +840,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Search query='{text}' results={len(results)}")
             return await ui.show_search_results(update, context, results)
 
-    # === 4.  CHAT SYSTEMS ===
+    # 4. CHAT SYSTEMS
     if chat.is_in_public_chat(uid):
         return await chat.handle_public_message(update, context, text)
     if chat.is_in_private_thread(uid):
         return await chat.handle_private_message(update, context, text)
 
-    # === 5.  WALLET WITHDRAWAL ===
+    # STEP 5 — IMAGE (final)
+    if st["phase"] == "add_image":
+        # accept EITHER a photo OR the text "/skip"
+        if update.effective_message.photo:
+            st["image_url"] = update.effective_message.photo[-1].file_id
+        elif text and text.lower() == "/skip":
+            st["image_url"] = None
+        else:
+            return await msg.reply_text("Please send a photo or type /skip.")
+
+        # ----- create product -----
+        title, price, qty, desc = st["title"], st["price"], st["qty"], st["desc"]
+        image_url = st.get("image_url")
+        sku = storage.add_seller_product(user_id, title, price, desc, stock=qty, image_url=image_url)
+        storage.user_flow_state.pop(user_id, None)
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")],
+            [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop")],
+        ])
+
+        await msg.reply_text(
+            f"✅ *Listing Added!*\n\n"
+            f"• *Title:* {title}\n"
+            f"• *Price:* ${price:.2f}\n"
+            f"• *Stock:* {qty}\n"
+            f"• *SKU:* `{sku}`" + ("\n• *Image attached*" if image_url else ""),
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+    # 6. WALLET WITHDRAWAL
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
-
-    # === 6.  FALL-BACK ===
-    await msg.reply_text("❓ I didn’t expect that message. Use /start to go back.")
-
-
-# ---------- CATCH-ALL COMMAND (lets /skip through) ----------
-async def catch_all_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    # if user is in seller flow, treat the command as plain text
-    if seller.is_in_seller_flow(uid):
-        return await handle_message(update, context)   # re-use the same router
-    # otherwise ignore unknown commands
-    await update.effective_message.reply_text("❓ Unknown command.")
-
 
 # ==========================
 # MAIN
@@ -881,29 +889,26 @@ def main():
         return
     
     storage.seed_builtin_products_once()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # 1. payment handlers
+    # Mandatory Payment Logic Handlers (Pre-checkout and Success)
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # 2. specific commands  (MUST be first)
+    # Standard Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop_cmd))
-
-    # 3. callback router
+    
+    # The Router handles all menu clicks (including pay_native)
     app.add_handler(CallbackQueryHandler(callback_router))
-
-    # 4. catch-all commands  (AFTER specific ones)
-    app.add_handler(MessageHandler(filters.COMMAND, catch_all_commands))
-
-    # 5. plain text / photo
+    
+    # General Message Handlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_message))
 
     print("🤖 Bot running... Tokens loaded from .env")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()

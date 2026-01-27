@@ -245,17 +245,25 @@ async def show_search_results(update, context, results):
 # MAIN MENU
 # ==========================================
 def build_main_menu(balance: float, uid: int = None):
-    # prevent crash when uid is missing
+    # ---- cart count ----
     cart_count = 0
-
-    try:
-        if uid is not None:
+    if uid is not None:
+        try:
             cart = shopping_cart.get_user_cart(uid)
             cart_count = sum(item.get("qty", 0) for item in cart.values())
-    except:
-        cart_count = 0
+        except Exception:
+            cart_count = 0
 
     cart_label = f"🛒 Cart ({cart_count})"
+
+    # ---- crypto balances ----
+    if uid is not None:
+        wallet_dict = wallet_utils.ensure_user_wallet(uid)
+        balances    = wallet_utils.get_balance_both(wallet_dict["public_key"])
+        bal_main    = balances["mainnet"]
+        bal_dev     = balances["devnet"]
+    else:
+        bal_main = bal_dev = 0.0
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop"),
@@ -269,16 +277,21 @@ def build_main_menu(balance: float, uid: int = None):
         [InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")],
     ])
 
+    # main text: crypto first, append stored $ only if > 0
     text = (
-        "🌀 *Xchange — Secure Escrow Marketplace*\n"
+        "🌀 *Grand Stand Marketplace*\n"
         "══════════════════════\n"
-        f"💳 *Balance:* `${balance:.2f}`\n"
+        f"🌍 *Mainnet:* `{bal_main:.4f} SOL`\n"
+        f"🧪 *Devnet:* `{bal_dev:.4f} SOL`\n"
+    )
+    if balance > 0:                       # legacy stored-dollar balance
+        text += f"💳 *Stored:* `${balance:.2f}`\n"
+    text += (
         "══════════════════════\n"
-        "_Buy • Sell • Escrow • Trade Safely_\n"
+        "_Buy • Sell • Escrow • Trade Safely_"
     )
 
     return kb, text
-
 
 
 # ==========================================
@@ -401,56 +414,89 @@ async def view_item_details(update, context, sku):
 # STRIPE — CART CHECKOUT
 # ==========================================
 async def stripe_cart_checkout(update, context, total_str):
+    import requests
+    
     q = update.callback_query
-    uid = update.effective_user.id   
+    uid = update.effective_user.id
+    
     cart = shopping_cart.get_user_cart(uid)
     if not cart:
         return await q.answer("Cart is empty.", show_alert=True)
 
-    # Build items list
-    items = [{"sku": sku, "qty": int(item.get("qty", 1) or 1)} for sku, item in cart.items()]
+    # Calculate real total from cart items
+    real_total = 0
+    items_for_server = []
+    
+    for sku, item in cart.items():
+        qty = int(item.get("qty", 1))
+        price = float(item.get("price", 0))
+        real_total += price * qty
+        items_for_server.append({"sku": sku, "qty": qty, "price": price})
 
-    for i in items:
-        sku = i["sku"]
-        qty = i["qty"]
-        ok, stock_left = inventory.check_stock(sku, qty)
-        if not ok:
-            return await q.answer(
-                f"❌ {sku}: only {stock_left} left. Reduce quantity first.",
-                show_alert=True
-            )
+    # Use calculated total, not passed string (security)
+    total = real_total
 
-    # Create order first
+    # Create parent cart order
     order_id = storage.add_order(
         buyer_id=uid,
         item_name="Cart",
-        qty=sum(i["qty"] for i in items),
-        amount=float(total_str),
+        qty=sum(i["qty"] for i in items_for_server),
+        amount=total,
         method="stripe_cart",
         seller_id=0
     )
 
-    ok, msg = inventory.reserve_cart_for_payment(order_id, items)
-    if not ok:
-        storage.update_order_status(order_id, "failed", reason=msg)
-        return await q.answer(f"❌ {msg}", show_alert=True)
+    # Reserve each item
+    reserved = []
+    try:
+        for it in items_for_server:
+            sku = it["sku"]
+            qty = it["qty"]
+            ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
+            if not ok:
+                raise RuntimeError(f"{sku}: {msg}")
+            reserved.append(sku)
+    except Exception as e:
+        # Rollback
+        for sku in reserved:
+            inventory.release_on_failure_or_refund(order_id, reason="cart_reserve_failed")
+        storage.update_order_status(order_id, "failed", reason=str(e))
+        return await q.answer(f"❌ {e}", show_alert=True)
 
-    # Send invoice with cart payload
-    provider_token = os.getenv("PROVIDER_TOKEN_STRIPE")
-    price_in_cents = int(float(total_str) * 100)
+    # Call server
+    try:
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        res = requests.post(
+            f"{SERVER_BASE}/create_checkout_session",
+            json={
+                "order_id": order_id,
+                "user_id": uid,
+                "amount": total,
+            },
+            timeout=15,
+        )
+        res.raise_for_status()
+        checkout_url = res.json().get("checkout_url")
 
-    await context.bot.send_invoice(
-        chat_id=uid,
-        title="Order: Cart",
-        description="Checkout your cart",
-        payload=f"PAYCART|{order_id}",
-        provider_token=provider_token,
-        currency="SGD",
-        prices=[LabeledPrice("Total Price", price_in_cents)],
-        start_parameter="market-cart-checkout"
+    except Exception as e:
+        for sku in reserved:
+            inventory.release_on_failure_or_refund(order_id, reason="stripe_call_failed")
+        storage.update_order_status(order_id, "failed", reason=str(e))
+        return await q.edit_message_text(f"❌ Stripe error: {e}")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
+    ])
+
+    await q.edit_message_text(
+        f"🛒 *Cart Checkout*\n"
+        f"Items: {len(cart)}\n"
+        f"Total: *${total:.2f}*\n\n"
+        f"Complete payment via Stripe:",
+        reply_markup=kb,
+        parse_mode="Markdown"
     )
-    return await q.answer()
-
 # ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
@@ -648,9 +694,11 @@ async def handle_post_completion_dispute(update, context, oid):
 # STRIPE — SINGLE ITEM
 # ==========================================
 async def create_stripe_checkout(update, context, sku, qty):
+    import requests
+    
     q = update.callback_query
     item = get_any_product_by_sku(sku)
-
+    
     if not item:
         return await q.answer("❌ Item no longer available.", show_alert=True)
 
@@ -658,49 +706,64 @@ async def create_stripe_checkout(update, context, sku, qty):
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
 
-    stripe_token = os.getenv("PROVIDER_TOKEN_STRIPE")
-    if not stripe_token:
-        return await q.answer("❌ Stripe is currently unavailable (Token missing).", show_alert=True)
+    # 1) Create order first
+    order_id = storage.add_order(
+        buyer_id=user_id,
+        item_name=item["name"],
+        qty=qty,
+        amount=total,
+        method="stripe_direct",
+        seller_id=int(item.get("seller_id", 0)),
+    )
 
+    # 2) Reserve stock
+    ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
+    if not ok:
+        storage.update_order_status(order_id, "failed", reason=msg)
+        return await q.answer(f"❌ {msg}", show_alert=True)
+
+    # 3) Call YOUR server (not Telegram Payments)
     try:
-        price_in_cents = int(total * 100)
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        if not SERVER_BASE:
+            raise ValueError("SERVER_BASE_URL not set in .env")
 
-        # 1) Create order and get real order_id
-        order_id = storage.add_order(
-            buyer_id=user_id,
-            item_name=item["name"],
-            qty=qty,
-            amount=total,
-            method="Stripe",
-            seller_id=int(item.get("seller_id", 0)),
+        res = requests.post(
+            f"{SERVER_BASE}/create_checkout_session",
+            json={
+                "order_id": order_id,
+                "user_id": user_id,
+                "amount": total,
+            },
+            timeout=15,
         )
+        res.raise_for_status()
+        data = res.json()
+        checkout_url = data.get("checkout_url")
 
-        # 2) Reserve inventory before sending invoice
-        ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
-        if not ok:
-            storage.update_order_status(order_id, "failed", reason=msg)
-            return await q.answer(f"❌ {msg}", show_alert=True)
-
-        # 3) Put order_id into invoice payload
-        payload = f"PAY|{order_id}|{sku}|{qty}"
-
-        await context.bot.send_invoice(
-            chat_id=user_id,
-            title=f"Buy {item['name']}",
-            description=f"Quantity: {qty} | Secure checkout via Stripe",
-            payload=payload,
-            provider_token=stripe_token,
-            currency="SGD",
-            prices=[LabeledPrice(f"{item['name']} x{qty}", price_in_cents)],
-            start_parameter="stripe-purchase",
-        )
-
-        await q.answer()
+        if not checkout_url:
+            raise ValueError(f"Invalid server response: {data}")
 
     except Exception as e:
-        logger.error(f"Stripe Native Error: {e}")
-        await q.edit_message_text(f"❌ Could not initialize Stripe: {e}")
+        inventory.release_on_failure_or_refund(order_id, reason=f"stripe_create_failed:{e}")
+        storage.update_order_status(order_id, "failed", reason=str(e))
+        return await q.edit_message_text(f"❌ Stripe error: {e}")
 
+    # 4) Show Stripe checkout link
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
+        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
+    ])
+
+    await q.edit_message_text(
+        f"💳 *Stripe Checkout*\n\n"
+        f"Item: {item['name']}\n"
+        f"Qty: {qty}\n"
+        f"Total: *${total:.2f}*\n\n"
+        f"Click below to complete payment:",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
 # ==========================================
 # HitPay Checkout - Single Item
 # ==========================================                                                                  
@@ -799,6 +862,7 @@ async def create_hitpay_cart_checkout(update, context, total):
                 show_alert=True
             )
         
+
     # 1) Create a cart order first (single order_id)
     order_id = storage.add_order(
         buyer_id=user_id,
@@ -971,22 +1035,36 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab:
     # =========================================================================
     #  WALLET
     # =========================================================================
+    # =========================================================================
+    #  WALLET
+    # =========================================================================
     if tab == "wallet":
         local_bal = storage.get_balance(uid)
         user_wallet = wallet_utils.ensure_user_wallet(uid)
-        on_chain = wallet_utils.get_balance_devnet(user_wallet["public_key"])
+
+        # ---- new multi-network balance ----
+        balances      = wallet_utils.get_balance_both(user_wallet["public_key"])
+        curr_network  = wallet_utils.get_network()          # "devnet" | "mainnet"
+        on_chain      = balances[curr_network]              # primary balance
+        network_emoji = "🌍" if curr_network == "mainnet" else "🧪"
+
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Deposit / View Address", callback_data="wallet:deposit")],
-            [InlineKeyboardButton("📤 Withdraw SOL", callback_data="wallet:withdraw")],
-            [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
+            [InlineKeyboardButton("📤 Withdraw SOL",          callback_data="wallet:withdraw")],
+            [InlineKeyboardButton("🔧 Network Info",         callback_data="wallet:network")],
+            [InlineKeyboardButton("🏠 Home",                  callback_data="menu:main")]
         ])
-        return await safe_edit(
+
+        text = (
             f"💼 **Wallet Dashboard**\n\n"
             f"💳 **Stored Balance:** `${local_bal:.2f}`\n"
-            f"🧪 **Solana Devnet:** `{on_chain:.4f} SOL`\n\n"
-            f"📍 **Public Key:**\n`{user_wallet['public_key']}`",
-            kb,
+            f"{network_emoji} **{curr_network.title()}:** `{on_chain:.4f} SOL`\n"
+            f"🧪 **Devnet:** `{balances['devnet']:.4f} SOL`\n"
+            f"🌍 **Mainnet:** `{balances['mainnet']:.4f} SOL`\n\n"
+            f"📍 **Public Key:**\n`{user_wallet['public_key']}`"
         )
+
+        return await safe_edit(text, kb)
 
     # =========================================================================
     #  MESSAGES
