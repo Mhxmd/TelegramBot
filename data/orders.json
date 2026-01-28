@@ -190,5 +190,20 @@
     "inv_reserved": true,
     "inv_deducted": false,
     "expired_at": 1769495895
+  },
+  "ord_1769498943": {
+    "id": "ord_1769498943",
+    "item": "Cart",
+    "qty": 1,
+    "amount": 1.0,
+    "method": "stripe_cart",
+    "seller_id": 0,
+    "buyer_id": 795927036,
+    "status": "pending",
+    "ts": 1769498943,
+    "sku": "sku_1336081032_1768978998",
+    "inv_qty": 1,
+    "inv_reserved": true,
+    "inv_deducted": false
   }
 }

@@ -14,3 +14,4 @@ databases
 aiofiles
 python-multipart
 cryptography
+base58
