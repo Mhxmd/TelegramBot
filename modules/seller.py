@@ -4,8 +4,6 @@ from telegram.constants import ParseMode
 from telegram import Update
 from telegram.error import BadRequest 
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest 
-from telegram.ext import ContextTypes
 from modules import shopping_cart, storage
 
 import datetime as _dt
@@ -186,6 +184,7 @@ async def prompt_update_stock(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # store state so the next text message is treated as the new quantity
     storage.user_flow_state[user_id] = {"phase": "update_stock", "sku": sku}
+
     storage.save_flow()
 
     await q.edit_message_text(
@@ -340,7 +339,8 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
             return await msg.reply_text("❌ Send a whole number ≥ 0.")
 
         sku   = st["sku"]
-        title = storage.get_any_product_by_sku(sku).get("name", sku)
+        _, prod = storage.get_seller_product_by_sku(sku)
+        title = prod.get("name", sku) if prod else sku
         storage.set_seller_stock(sku, new_qty)
         storage.user_flow_state.pop(user_id, None)          # clear state
         storage.save_flow()
