@@ -282,8 +282,9 @@ def is_in_seller_flow(user_id: int) -> bool:
     st = storage.user_flow_state.get(user_id)
     if not st:
         return False
-    
+
     phase = st.get("phase", "")
+    
     return phase.startswith("add_") or phase == "update_stock"
 
 
