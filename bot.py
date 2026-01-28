@@ -714,6 +714,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # SELLER
         if data.startswith("sell:list"):
             return await seller.show_seller_listings(update, context)
+        
+        if data == "sell:pick_stock":
+             return await seller.pick_product_to_update_stock(update, context)
+
+        if data.startswith("sell:stock:"):
+             sku = data.split(":")[2]
+             return await seller.prompt_update_stock(update, context, sku)
 
         if data.startswith("sell:remove_confirm"):
             return await seller.confirm_remove_listing(update, context, data.split(":")[2])

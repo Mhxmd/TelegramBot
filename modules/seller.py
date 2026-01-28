@@ -280,7 +280,11 @@ async def start_add_listing(update, context):
 
 def is_in_seller_flow(user_id: int) -> bool:
     st = storage.user_flow_state.get(user_id)
-    return bool(st and st.get("phase", "").startswith("add_"))
+    if not st:
+        return False
+    
+    phase = st.get("phase", "")
+    return phase.startswith("add_") or phase == "update_stock"
 
 
 async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
