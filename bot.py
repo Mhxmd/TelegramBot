@@ -879,6 +879,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 6. WALLET WITHDRAWAL
     if wallet.is_in_withdraw_flow(uid):
         return await wallet.handle_withdraw_flow(update, context, text)
+    
+async def skip_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    st = storage.user_flow_state.get(user_id)
+
+    # Only allow /skip if the user is actually adding an image
+    if st and st.get("phase") == "add_image":
+        # Pass the command to your existing logic as if it were text
+        await seller.handle_seller_flow(update, context, "/skip")
+    else:
+        # Optional: Reply if they try to skip when they shouldn't
+        await update.message.reply_text("Nothing to skip right now.")
 
 # ==========================
 # MAIN
@@ -899,6 +911,8 @@ def main():
     # Standard Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop_cmd))
+
+    app.add_handler(CommandHandler("skip", skip_command_handler))
     
     # The Router handles all menu clicks (including pay_native)
     app.add_handler(CallbackQueryHandler(callback_router))
