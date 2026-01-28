@@ -173,9 +173,9 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
     subtotal = price * qty
 
     text = (
-        f"✔ *Added to cart!* {item['name']}\n"
+        f"✔️ *Added to cart!* {item['name']}\n"
         f"Qty: *{qty}*\n"
-        f"💵 Price: `${price:.2f}` × {qty} = *${subtotal:.2f}*"
+        f"💵 Price: ${price:.2f} × {qty} = *${subtotal:.2f}*"
     )
 
     kb = InlineKeyboardMarkup([
@@ -196,13 +196,19 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
         )]
     ])
 
+    # ➜  guard against “Message is not modified” crash
+    current_text = q.message.text or ""
+    current_kb   = q.message.reply_markup
+    if current_text == text and (current_kb is None or current_kb.to_dict() == kb.to_dict()):
+        return await q.answer()          # just ack, no edit
+
+    # safe to edit
     try:
         return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
         if "not modified" in str(e).lower():
             return await q.answer()
         raise
-
 
 # ------------------------------------------
 # CHANGE QUANTITY
