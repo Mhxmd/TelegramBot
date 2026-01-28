@@ -203,13 +203,13 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
         return await q.answer()          # just ack, no edit
 
     # safe to edit
+
     try:
         return await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
         if "not modified" in str(e).lower():
-            return await q.answer()
+            return await q.answer()  # Just ack, ignore duplicate
         raise
-
 # ------------------------------------------
 # CHANGE QUANTITY
 # ------------------------------------------
