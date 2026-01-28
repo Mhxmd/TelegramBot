@@ -15,3 +15,5 @@ aiofiles
 python-multipart
 cryptography
 base58
+solana
+solders
