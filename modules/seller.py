@@ -186,6 +186,7 @@ async def prompt_update_stock(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # store state so the next text message is treated as the new quantity
     storage.user_flow_state[user_id] = {"phase": "update_stock", "sku": sku}
+    storage.save_flow()
 
     await q.edit_message_text(
         f"📦 Send the *new stock quantity* for `{prod['name']}`:",
@@ -299,6 +300,7 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if st["phase"] == "add_title":
         st["title"] = text
         st["phase"] = "add_price"
+        storage.save_flow()
         return await msg.reply_text("💲 Send the *price* (e.g. 19.99):", parse_mode=ParseMode.MARKDOWN)
 
     if st["phase"] == "add_price":
@@ -341,6 +343,7 @@ async def handle_seller_flow(update: Update, context: ContextTypes.DEFAULT_TYPE,
         title = storage.get_any_product_by_sku(sku).get("name", sku)
         storage.set_seller_stock(sku, new_qty)
         storage.user_flow_state.pop(user_id, None)          # clear state
+        storage.save_flow()
 
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")

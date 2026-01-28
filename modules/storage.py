@@ -26,6 +26,7 @@ MESSAGES_FILE = "messages.json"
 WALLETS_FILE = "wallets.json"
 USERS_FILE = "users.json"
 PENDING_FILE = "pending_notifications.json"
+FLOW_STATE_FILE = "data/flow_state.json"
 
 PENDING_STATUSES = {"pending", "awaiting_payment", "created"}
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
@@ -34,7 +35,19 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 # RUNTIME STATE (IN-MEMORY)
 # =========================================================
 last_message_time: Dict[int, float] = {}
-user_flow_state: Dict[int, dict] = {}
+
+def _load_flow_state():
+    # Load raw JSON (keys are strings like "12345")
+    data = load_json(FLOW_STATE_FILE)
+    # Convert keys back to integers so the bot works correctly
+    return {int(k): v for k, v in data.items() if k.isdigit()}
+
+# Initialize state from file instead of empty dict
+user_flow_state: Dict[int, dict] = _load_flow_state()
+
+def save_flow():
+    save_json(FLOW_STATE_FILE, user_flow_state)
+    
 active_private_chats: Dict[int, str] = {}
 active_public_chat: Set[int] = set()
 
