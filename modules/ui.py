@@ -520,13 +520,20 @@ async def on_buy(update, context, sku, qty):
         [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")], 
         [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
+    
 
     txt = (
         f"{item.get('emoji')} *{item['name']}*\n"
         f"Qty: *{qty}*\nTotal: *SGD {total:.2f}*" 
     )
 
-    await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+    if q.message.photo:
+        # If the listing has an image, delete it and send a fresh text menu
+        await q.message.delete()
+        await q.message.reply_text(txt, parse_mode="Markdown", reply_markup=kb)
+    else:
+        # If it's already text-only, just edit it smoothly
+        await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
 
 
 # ==========================================
