@@ -735,6 +735,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await ui.on_menu(update, context)
             else:
                 return await q.answer("❌ Wrong answer", show_alert=True)
+            
+        if data == "sell:pick_stock":
+             return await seller.pick_product_to_update_stock(update, context)
+
+        if data.startswith("sell:stock:"):
+             sku = data.split(":")[2]
+             return await seller.prompt_update_stock(update, context, sku)
 
         # ----- FOOTER FROM ORDERS SCREEN  -----
         if data == "menu:orders:main":
