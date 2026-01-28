@@ -342,3 +342,10 @@ async def hitpay_webhook(request: Request):
 
     return {"status": "ok"}
 
+# ==========================================
+# 🚀 START SERVER (Required for Railway)
+# ==========================================
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 4242))
+    uvicorn.run(app, host="0.0.0.0", port=port)
