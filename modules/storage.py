@@ -1,9 +1,7 @@
 import os
 import json
 import time
-from typing import List, Dict, Tuple, Set
-from typing import Optional, Tuple, Dict
-import datetime as _dt 
+from typing import List, Dict, Tuple, Set, Optional
 
 # Initialize the global dictionary to store user carts
 CART_FILE = "data/cart.json"
@@ -12,7 +10,6 @@ def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-
 
 # =========================================================
 # FILE PATHS & CONFIG
@@ -32,14 +29,40 @@ PENDING_STATUSES = {"pending", "awaiting_payment", "created"}
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # =========================================================
+# JSON HELPERS 
+# =========================================================
+def load_json(path: str):
+    # Ensure parent folder exists
+    _ensure_parent_dir(path)
+
+    # Create file if missing
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{}")
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except Exception:
+            return {}
+
+def save_json(path: str, data):
+    _ensure_parent_dir(path)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)   
+
+# =========================================================
 # RUNTIME STATE (IN-MEMORY)
 # =========================================================
 last_message_time: Dict[int, float] = {}
 
 def _load_flow_state():
     # Load raw JSON (keys are strings like "12345")
+    # ✅ This works now because load_json was defined above!
     data = load_json(FLOW_STATE_FILE)
-    # Convert keys back to integers so the bot works correctly
     return {int(k): v for k, v in data.items() if k.isdigit()}
 
 # Initialize state from file instead of empty dict
@@ -69,34 +92,7 @@ for path, default in FILES_AND_DEFAULTS.items():
     if not os.path.exists(path):
         _ensure_parent_dir(path)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(default, f, indent=2)
-
-
-# =========================================================
-# JSON HELPERS
-# =========================================================
-def load_json(path: str):
-    # Ensure parent folder exists
-    _ensure_parent_dir(path)
-
-    # Create file if missing
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{}")
-        return {}
-
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except Exception:
-            return {}
-
-def save_json(path: str, data):
-    _ensure_parent_dir(path)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)   
+            json.dump(default, f, indent=2)   
 
 # =========================================================
 # SEED BUILT-IN PRODUCTS INTO SELLER_PRODUCTS (ONCE)
