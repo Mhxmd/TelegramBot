@@ -804,7 +804,7 @@ async def create_hitpay_checkout(update, context, sku, qty):
         return await q.answer(f"❌ {msg}", show_alert=True)
 
     try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
+        SERVER_BASE = os.getenv("SERVER_BASE_URL", "stripe-server-for-telegram-bot-production.up.railway.app").rstrip("/")
         if not SERVER_BASE:
             inventory.release_on_failure_or_refund(order_id, reason="missing_server_base")
             storage.update_order_status(order_id, "failed", reason="SERVER_BASE_URL missing")
