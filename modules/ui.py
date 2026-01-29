@@ -196,7 +196,8 @@ async def show_user_search_results(update, context, results):
 
 async def show_search_results(update, context, results):
     msg = update.effective_message
-
+    uid = update.effective_user.id
+    
     if not results:
         return await msg.reply_text("❌ No products found. Try another name.")
 
@@ -223,14 +224,33 @@ async def show_search_results(update, context, results):
             f"Stock: {stock_text}"
         )
 
-        view_btn = InlineKeyboardButton(f"🔎 View {str(name)[:12]}", callback_data=f"view_item:{sku}")
+        view_btn = InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}")
 
-        if stock > 0:
-            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
-            rows.append([view_btn, cart_btn])
-        else:
-            # no add-to-cart button when sold out
+        # Pick who to contact
+        contact_target = sid
+        contact_label = "💬 Chat"
+        if int(sid) == 0:
+            # System item: send to admin (only if ADMIN_ID exists)
+            if int(ADMIN_ID) > 0:
+                contact_target = int(ADMIN_ID)
+                contact_label = "💬 Message Admin"
+            else:
+                contact_target = None  # hide chat button if no admin set
+
+        chat_btn = None
+        if contact_target is not None and uid != sid:
+            chat_btn = InlineKeyboardButton(contact_label, callback_data=f"contact:{sku}:{int(contact_target)}")
+
+        # OWNER CAN’T BUY OWN ITEM
+        if uid == sid:
             rows.append([view_btn])
+        else:
+            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+            if chat_btn:
+                rows.append([view_btn, cart_btn, chat_btn])
+            else:
+                rows.append([view_btn, cart_btn])
+
 
 
     rows.append([InlineKeyboardButton("🔍 Search Again", callback_data="shop:search")])
@@ -245,25 +265,17 @@ async def show_search_results(update, context, results):
 # MAIN MENU
 # ==========================================
 def build_main_menu(balance: float, uid: int = None):
-    # ---- cart count ----
+    # prevent crash when uid is missing
     cart_count = 0
-    if uid is not None:
-        try:
+
+    try:
+        if uid is not None:
             cart = shopping_cart.get_user_cart(uid)
             cart_count = sum(item.get("qty", 0) for item in cart.values())
-        except Exception:
-            cart_count = 0
+    except:
+        cart_count = 0
 
     cart_label = f"🛒 Cart ({cart_count})"
-
-    # ---- crypto balances ----
-    if uid is not None:
-        wallet_dict = wallet_utils.ensure_user_wallet(uid)
-        balances    = wallet_utils.get_balance_both(wallet_dict["public_key"])
-        bal_main    = balances["mainnet"]
-        bal_dev     = balances["devnet"]
-    else:
-        bal_main = bal_dev = 0.0
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛍 Marketplace", callback_data="menu:shop"),
@@ -277,21 +289,16 @@ def build_main_menu(balance: float, uid: int = None):
         [InlineKeyboardButton("🔄 Refresh", callback_data="menu:refresh")],
     ])
 
-    # main text: crypto first, append stored $ only if > 0
     text = (
-        "🌀 *Grand Stand Marketplace*\n"
+        "🌀 *Xchange — Secure Escrow Marketplace*\n"
         "══════════════════════\n"
-        f"🌍 *Mainnet:* `{bal_main:.4f} SOL`\n"
-        f"🧪 *Devnet:* `{bal_dev:.4f} SOL`\n"
-    )
-    if balance > 0:                       # legacy stored-dollar balance
-        text += f"💳 *Stored:* `${balance:.2f}`\n"
-    text += (
+        f"💳 *Balance:* `${balance:.2f}`\n"
         "══════════════════════\n"
-        "_Buy • Sell • Escrow • Trade Safely_"
+        "_Buy • Sell • Escrow • Trade Safely_\n"
     )
 
     return kb, text
+
 
 
 # ==========================================
@@ -327,12 +334,25 @@ def build_shop_keyboard(uid=None, page=0):
 
         view_btn = InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}")
 
-        # OWNER CAN’T BUY OWN ITEM
+        # OWNER CAN'T BUY OWN ITEM
         if viewer_id == sid:
-            rows.append([view_btn])                      # only “View”
+            rows.append([view_btn])                      # only "View"
         else:
             cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
-            rows.append([view_btn, cart_btn])            # normal two buttons
+            
+            # ADD MESSAGE BUTTON - System items message Admin, others message Seller
+            if int(sid) == 0:
+                msg_target = int(ADMIN_ID) if int(ADMIN_ID) > 0 else None
+                msg_label = "💬 Message Admin"
+            else:
+                msg_target = int(sid)
+                msg_label = "💬 Message"
+            
+            if msg_target and msg_target != viewer_id:
+                msg_btn = InlineKeyboardButton(msg_label, callback_data=f"contact:{sku}:{msg_target}")
+                rows.append([view_btn, cart_btn, msg_btn])
+            else:
+                rows.append([view_btn, cart_btn])
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
@@ -390,11 +410,25 @@ async def view_item_details(update, context, sku):
             [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
         ])
     else:
+        # Determine message target (Admin for system items, Seller for user items)
+        if int(seller_id) == 0:
+            msg_target = int(ADMIN_ID) if int(ADMIN_ID) > 0 else None
+            msg_text = "💬 Message Admin"
+        else:
+            msg_target = int(seller_id)
+            msg_text = "💬 Message Seller"
+        
+        # Build button row with Cart, Buy, and Message
+        button_row = [
+            InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
+            InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
+        ]
+        
+        if msg_target and msg_target != uid:
+            button_row.append(InlineKeyboardButton(msg_text, callback_data=f"contact:{sku}:{msg_target}"))
+        
         kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
-                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
-            ],
+            button_row,
             [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
         ])
 
@@ -414,89 +448,103 @@ async def view_item_details(update, context, sku):
 # STRIPE — CART CHECKOUT
 # ==========================================
 async def stripe_cart_checkout(update, context, total_str):
-    import requests
-    
     q = update.callback_query
-    uid = update.effective_user.id
-    
+    uid = update.effective_user.id   
     cart = shopping_cart.get_user_cart(uid)
     if not cart:
         return await q.answer("Cart is empty.", show_alert=True)
 
-    # Calculate real total from cart items
-    real_total = 0
-    items_for_server = []
-    
-    for sku, item in cart.items():
-        qty = int(item.get("qty", 1))
-        price = float(item.get("price", 0))
-        real_total += price * qty
-        items_for_server.append({"sku": sku, "qty": qty, "price": price})
+    # Build items list
+    items = [{"sku": sku, "qty": int(item.get("qty", 1) or 1)} for sku, item in cart.items()]
 
-    # Use calculated total, not passed string (security)
-    total = real_total
-
-    # Create parent cart order
+    # Create order first
     order_id = storage.add_order(
         buyer_id=uid,
         item_name="Cart",
-        qty=sum(i["qty"] for i in items_for_server),
-        amount=total,
+        qty=sum(i["qty"] for i in items),
+        amount=float(total_str),
         method="stripe_cart",
         seller_id=0
     )
 
-    # Reserve each item
-    reserved = []
-    try:
-        for it in items_for_server:
-            sku = it["sku"]
-            qty = it["qty"]
-            ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
-            if not ok:
-                raise RuntimeError(f"{sku}: {msg}")
-            reserved.append(sku)
-    except Exception as e:
-        # Rollback
-        for sku in reserved:
-            inventory.release_on_failure_or_refund(order_id, reason="cart_reserve_failed")
-        storage.update_order_status(order_id, "failed", reason=str(e))
-        return await q.answer(f"❌ {e}", show_alert=True)
+    ok, msg = inventory.reserve_cart_for_payment(order_id, items)
+    if not ok:
+        storage.update_order_status(order_id, "failed", reason=msg)
+        return await q.answer(f"❌ {msg}", show_alert=True)
 
-    # Call server
-    try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-        res = requests.post(
-            f"{SERVER_BASE}/create_checkout_session",
-            json={
-                "order_id": order_id,
-                "user_id": uid,
-                "amount": total,
-            },
-            timeout=15,
-        )
-        res.raise_for_status()
-        checkout_url = res.json().get("checkout_url")
+    # Send invoice with cart payload
+    provider_token = os.getenv("PROVIDER_TOKEN_STRIPE")
+    price_in_cents = int(float(total_str) * 100)
 
-    except Exception as e:
-        for sku in reserved:
-            inventory.release_on_failure_or_refund(order_id, reason="stripe_call_failed")
-        storage.update_order_status(order_id, "failed", reason=str(e))
-        return await q.edit_message_text(f"❌ Stripe error: {e}")
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")],
-    ])
-
-    await q.edit_message_text(
-        f"🛒 *Cart Checkout*\n"
-        f"Items: {len(cart)}\n"
-        f"Total: *${total:.2f}*\n\n"
-        f"Complete payment via Stripe:",
-        reply_markup=kb,
-        parse_mode="Markdown"
+    await context.bot.send_invoice(
+        chat_id=uid,
+        title="Order: Cart",
+        description="Checkout your cart",
+        payload=f"PAYCART|{order_id}",
+        provider_token=provider_token,
+        currency="SGD",
+        prices=[LabeledPrice("Total Price", price_in_cents)],
+        start_parameter="market-cart-checkout"
     )
+    return await q.answer()
+
+async def native_cart_checkout(update, context, provider: str, total_str: str):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    cart = shopping_cart.get_user_cart(uid)
+    if not cart:
+        return await q.answer("Cart is empty.", show_alert=True)
+
+    total = float(total_str)
+
+    # Build items for reservation
+    items = [{"sku": sku, "qty": int(item.get("qty", 1) or 1)} for sku, item in cart.items()]
+
+    # 1) Create order
+    order_id = storage.add_order(
+        buyer_id=uid,
+        item_name="Cart",
+        qty=sum(i["qty"] for i in items),
+        amount=total,
+        method=f"{provider}_cart",
+        seller_id=0
+    )
+
+    # 2) Reserve inventory
+    ok, msg = inventory.reserve_cart_for_payment(order_id, items)
+    if not ok:
+        storage.update_order_status(order_id, "failed", reason=msg)
+        return await q.answer(f"❌ {msg}", show_alert=True)
+
+    # 3) Provider token
+    token_map = {
+        "smart_glocal": os.getenv("PROVIDER_TOKEN_SMART_GLOCAL", "").strip(),
+        "redsys": os.getenv("PROVIDER_TOKEN_REDSYS", "").strip(),
+        "stripe": os.getenv("PROVIDER_TOKEN_STRIPE", "").strip(),
+    }
+    provider_token = token_map.get(provider, "")
+    if not provider_token:
+        inventory.release_on_failure_or_refund(order_id, reason="missing_provider_token")
+        storage.update_order_status(order_id, "failed", reason="missing_provider_token")
+        return await q.answer("❌ Provider token missing.", show_alert=True)
+
+    price_in_cents = int(total * 100)
+
+    # 4) Send invoice (this creates the “Pay SGDxx.xx” message like your screenshot)
+    await context.bot.send_invoice(
+        chat_id=uid,
+        title="Order: Cart",
+        description=f"Checkout via {provider}",
+        payload=f"PAYCART|{order_id}|{provider}",
+        provider_token=provider_token,
+        currency="SGD",
+        prices=[LabeledPrice("Total Price", price_in_cents)],
+        start_parameter="market-cart-checkout"
+    )
+
+    return await q.answer()
+
 # ==========================================
 # SINGLE ITEM BUY — UI
 # ==========================================
@@ -513,27 +561,20 @@ async def on_buy(update, context, sku, qty):
     # FORMAT: pay_native:provider:amount:sku
     # Fixed syntax: added comma after Solana button and removed extra parentheses
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total}:{sku}:{qty}")],
-        [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total}:{sku}")],
-        [InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:{sku}")],
-        [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:{sku}")],
-        [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")], 
-        [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
+    [InlineKeyboardButton("💳 Stripe", callback_data=f"pay_native:stripe:{total:.2f}:{sku}:{qty}")],
+    [InlineKeyboardButton("🌐 Smart Glocal", callback_data=f"pay_native:smart_glocal:{total:.2f}:{sku}:{qty}")],
+    [InlineKeyboardButton("🇪🇸 Redsys", callback_data=f"pay_native:redsys:{total:.2f}:{sku}:{qty}")],
+    [InlineKeyboardButton("🇸🇬 PayNow (HitPay)", callback_data=f"hitpay:{sku}:{qty}")],
+    [InlineKeyboardButton("🚀 Pay with Solana (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:{sku}")],
+    [InlineKeyboardButton("🔙 Back", callback_data="menu:shop")],
     ])
-    
 
     txt = (
         f"{item.get('emoji')} *{item['name']}*\n"
         f"Qty: *{qty}*\nTotal: *SGD {total:.2f}*" 
     )
 
-    if q.message.photo:
-        # If the listing has an image, delete it and send a fresh text menu
-        await q.message.delete()
-        await q.message.reply_text(txt, parse_mode="Markdown", reply_markup=kb)
-    else:
-        # If it's already text-only, just edit it smoothly
-        await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
+    await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=kb)
 
 
 # ==========================================
@@ -672,40 +713,12 @@ async def handle_start_deep_link(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(f"⚠️ Inventory confirm failed: {msg}", parse_mode="Markdown")
 
 # ==========================================
-# Handle Post Completion
-# ==========================================
-
-async def handle_post_completion_dispute(update, context, oid):
-    q = update.callback_query
-    uid = update.effective_user.id
-
-    # 1. mark disputed
-    storage.update_order_status(oid, "disputed")
-
-    # 2. notify admin
-    try:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"🚨 **Post-completion dispute**\n"
-            f"Order: `{oid}`\n"
-            f"By user: `{uid}`",
-            parse_mode="Markdown"
-        )
-    except:
-        pass
-
-    await q.answer("⚖️ Dispute filed. An admin will review it.", show_alert=True)
-    return await on_menu(update, context, force_tab="orders")
-
-# ==========================================
 # STRIPE — SINGLE ITEM
 # ==========================================
 async def create_stripe_checkout(update, context, sku, qty):
-    import requests
-    
     q = update.callback_query
     item = get_any_product_by_sku(sku)
-    
+
     if not item:
         return await q.answer("❌ Item no longer available.", show_alert=True)
 
@@ -713,64 +726,49 @@ async def create_stripe_checkout(update, context, sku, qty):
     total = float(item["price"]) * qty
     user_id = update.effective_user.id
 
-    # 1) Create order first
-    order_id = storage.add_order(
-        buyer_id=user_id,
-        item_name=item["name"],
-        qty=qty,
-        amount=total,
-        method="stripe_direct",
-        seller_id=int(item.get("seller_id", 0)),
-    )
+    stripe_token = os.getenv("PROVIDER_TOKEN_STRIPE")
+    if not stripe_token:
+        return await q.answer("❌ Stripe is currently unavailable (Token missing).", show_alert=True)
 
-    # 2) Reserve stock
-    ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
-    if not ok:
-        storage.update_order_status(order_id, "failed", reason=msg)
-        return await q.answer(f"❌ {msg}", show_alert=True)
-
-    # 3) Call YOUR server (not Telegram Payments)
     try:
-        SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
-        if not SERVER_BASE:
-            raise ValueError("SERVER_BASE_URL not set in .env")
+        price_in_cents = int(total * 100)
 
-        res = requests.post(
-            f"{SERVER_BASE}/create_checkout_session",
-            json={
-                "order_id": order_id,
-                "user_id": user_id,
-                "amount": total,
-            },
-            timeout=15,
+        # 1) Create order and get real order_id
+        order_id = storage.add_order(
+            buyer_id=user_id,
+            item_name=item["name"],
+            qty=qty,
+            amount=total,
+            method="Stripe",
+            seller_id=int(item.get("seller_id", 0)),
         )
-        res.raise_for_status()
-        data = res.json()
-        checkout_url = data.get("checkout_url")
 
-        if not checkout_url:
-            raise ValueError(f"Invalid server response: {data}")
+        # 2) Reserve inventory before sending invoice
+        ok, msg = inventory.reserve_for_payment(order_id, sku, qty)
+        if not ok:
+            storage.update_order_status(order_id, "failed", reason=msg)
+            return await q.answer(f"❌ {msg}", show_alert=True)
+
+        # 3) Put order_id into invoice payload
+        payload = f"PAY|{order_id}|{sku}|{qty}"
+
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"Buy {item['name']}",
+            description=f"Quantity: {qty} | Secure checkout via Stripe",
+            payload=payload,
+            provider_token=stripe_token,
+            currency="SGD",
+            prices=[LabeledPrice(f"{item['name']} x{qty}", price_in_cents)],
+            start_parameter="stripe-purchase",
+        )
+
+        await q.answer()
 
     except Exception as e:
-        inventory.release_on_failure_or_refund(order_id, reason=f"stripe_create_failed:{e}")
-        storage.update_order_status(order_id, "failed", reason=str(e))
-        return await q.edit_message_text(f"❌ Stripe error: {e}")
+        logger.error(f"Stripe Native Error: {e}")
+        await q.edit_message_text(f"❌ Could not initialize Stripe: {e}")
 
-    # 4) Show Stripe checkout link
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay with Stripe", url=checkout_url)],
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu:shop")],
-    ])
-
-    await q.edit_message_text(
-        f"💳 *Stripe Checkout*\n\n"
-        f"Item: {item['name']}\n"
-        f"Qty: {qty}\n"
-        f"Total: *${total:.2f}*\n\n"
-        f"Click below to complete payment:",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
 # ==========================================
 # HitPay Checkout - Single Item
 # ==========================================                                                                  
@@ -855,21 +853,6 @@ async def create_hitpay_cart_checkout(update, context, total):
     user_id = update.effective_user.id
     total = float(total)
 
-    # Re-check entire cart before starting HitPay cart checkout
-    cart = shopping_cart.get_user_cart(user_id)
-    if not cart:
-        return await q.answer("Cart is empty.", show_alert=True)
-
-    for sku, item in cart.items():
-        qty = int(item.get("qty", 1) or 1)
-        ok, stock_left = inventory.check_stock(sku, qty)
-        if not ok:
-            return await q.answer(
-                f"❌ {sku}: only {stock_left} left. Reduce quantity first.",
-                show_alert=True
-            )
-        
-
     # 1) Create a cart order first (single order_id)
     order_id = storage.add_order(
         buyer_id=user_id,
@@ -880,8 +863,8 @@ async def create_hitpay_cart_checkout(update, context, total):
         seller_id=0,
     )
 
-    #  reserve each cart item here if cart uses real SKUs.
-    # (Optional: implement per-item reservation logic here)
+    # Optional: reserve each cart item here if your cart uses real SKUs.
+    # If your cart is mixed or you haven’t built per-item reservation yet, skip for now.
 
     try:
         SERVER_BASE = os.getenv("SERVER_BASE_URL", "").rstrip("/")
@@ -921,64 +904,6 @@ async def create_hitpay_cart_checkout(update, context, total):
         parse_mode="Markdown",
     )
 
-# ==========================================
-# FUNCTIONS PANEL  (your original)
-# ==========================================
-async def show_functions_menu(update, context):
-    q = update.callback_query
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Disputes (Admin)", callback_data="admin:disputes")],
-        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
-    ])
-    await q.edit_message_text(
-        "⚙️ *Functions Panel*\nAdmin tools + utilities.",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
-
-# ==========================================
-# Admin Dispute Dashboard  (links from Functions)
-# ==========================================
-async def admin_dispute_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    uid = update.effective_user.id
-
-    if uid != ADMIN_ID:
-        return await q.answer("🚫 Access Denied", show_alert=True)
-
-    orders = storage.load_json(storage.ORDERS_FILE)          # dict  ord_id -> dict
-    disputes = [o for o in orders.values() if o.get("status") == "disputed"]
-
-    if not disputes:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
-        return await q.edit_message_text("✅ No open disputes.", reply_markup=kb)
-
-    lines   = ["⚖️ *Open Disputes*"]
-    buttons = []
-
-    for o in disputes[:10]:          # cap at 10
-        oid   = o["id"]
-        buyer = o["buyer_id"]
-        seller= o["seller_id"]
-        amt   = float(o["amount"])
-        sku   = o.get("item", "Item")
-
-        lines.append(
-            f"\n`{oid}`\n"
-            f"💰 ${amt:.2f}  ┊  📦 {sku}\n"
-            f"👤 Buyer `{buyer}`  ┊  🏪 Seller `{seller}`"
-        )
-
-        buttons.append([
-            InlineKeyboardButton(f"✅ Release {oid}", callback_data=f"admin_release:{oid}"),
-            InlineKeyboardButton(f"💰 Refund {oid}",  callback_data=f"admin_refund:{oid}"),
-            InlineKeyboardButton(f"💬 Chat",         callback_data=f"chat:order:{oid}")
-        ])
-
-    buttons.append([InlineKeyboardButton("🏠 Functions", callback_data="menu:functions")])
-    kb = InlineKeyboardMarkup(buttons)
-    await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)   
-
 
 # ==========================================
 # MENU ROUTER
@@ -1002,169 +927,359 @@ def _safe_float(v, default=0.0):
             return float(s)
         except Exception:
             return default
-        
 
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force_tab: str = None):
     q = update.callback_query
-    _, tab = q.data.split(":", 1)
+
+    if force_tab:
+        tab = force_tab
+    else:
+        _, tab = (q.data or "").split(":", 1)
+
     uid = update.effective_user.id
 
-    # ---------- helper ----------
     async def safe_edit(text, kb):
         try:
             return await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-        except Exception as e:
-            logger.warning("safe_edit: %s – sending fresh message", e)
-            return await context.bot.send_message(
-                uid, text, reply_markup=kb, parse_mode="Markdown"
-            )
+        except:
+            return await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
 
-    # ---------- emoji quick-map ----------
-    emoji = {
-        "pending": "⏳", "awaiting_payment": "⏳", "escrow_hold": "🔒",
-        "shipped": "🚚", "completed": "✅", "disputed": "⚖️",
-        "refunded": "💰", "cancelled": "❌", "expired": "🕰",
-    }
-
-    # =========================================================================
-    #  SHOP
-    # =========================================================================
     if tab == "shop":
         txt, kb = build_shop_keyboard(uid=uid)
         return await safe_edit(txt, kb)
 
-    # =========================================================================
-    #  CART
-    # =========================================================================
     if tab == "cart":
         return await shopping_cart.view_cart(update, context)
 
-    # =========================================================================
-    #  WALLET
-    # =========================================================================
-    # =========================================================================
-    #  WALLET
-    # =========================================================================
     if tab == "wallet":
-        local_bal = storage.get_balance(uid)
+        # 1. Get the local stored balance (e.g., USD/Credits)
+        local_bal = storage.get_balance(uid) 
+        
+        # 2. Get the Solana wallet info
         user_wallet = wallet_utils.ensure_user_wallet(uid)
-
-        # ---- new multi-network balance ----
-        balances      = wallet_utils.get_balance_both(user_wallet["public_key"])
-        curr_network  = wallet_utils.get_network()          # "devnet" | "mainnet"
-        on_chain      = balances[curr_network]              # primary balance
-        network_emoji = "🌍" if curr_network == "mainnet" else "🧪"
+        pub = user_wallet["public_key"]
+        
+        # 3. Get actual SOL balance from Devnet
+        on_chain = wallet_utils.get_balance_devnet(pub)
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Deposit / View Address", callback_data="wallet:deposit")],
-            [InlineKeyboardButton("📤 Withdraw SOL",          callback_data="wallet:withdraw")],
-            [InlineKeyboardButton("🔧 Network Info",         callback_data="wallet:network")],
-            [InlineKeyboardButton("🏠 Home",                  callback_data="menu:main")]
+            [InlineKeyboardButton("📤 Withdraw SOL", callback_data="wallet:withdraw")],
+            [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
         ])
 
-        text = (
+        return await safe_edit(
             f"💼 **Wallet Dashboard**\n\n"
             f"💳 **Stored Balance:** `${local_bal:.2f}`\n"
-            f"{network_emoji} **{curr_network.title()}:** `{on_chain:.4f} SOL`\n"
-            f"🧪 **Devnet:** `{balances['devnet']:.4f} SOL`\n"
-            f"🌍 **Mainnet:** `{balances['mainnet']:.4f} SOL`\n\n"
-            f"📍 **Public Key:**\n`{user_wallet['public_key']}`"
+            f"🧪 **Solana Devnet:** `{on_chain:.4f} SOL`\n\n"
+            f"📍 **Public Key:**\n`{pub}`",
+            kb,
         )
 
-        return await safe_edit(text, kb)
-
-    # =========================================================================
-    #  MESSAGES
-    # =========================================================================
     if tab == "messages":
         threads = storage.load_json(storage.MESSAGES_FILE)
         buttons = []
-        for k, v in threads.items():
-            if uid in (v.get("buyer_id"), v.get("seller_id")) and uid not in v.get("hidden_from", []):
-                name = v.get("product", {}).get("name", "Chat")
-                buttons.append([
-                    InlineKeyboardButton(f"💬 {name}", callback_data=f"chat:open:{k}"),
-                    InlineKeyboardButton("🗑", callback_data=f"chat:delete:{k}")
-                ])
-        buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
-        msg_text = "💌 *Your Conversations*\n" + "━" * 15 + "\n"
-        if len(buttons) == 1:
-            msg_text += "_No active messages._"
-        return await safe_edit(msg_text, InlineKeyboardMarkup(buttons))
+        
+        # Filter threads involving the current user
+        user_threads = {k: v for k, v in threads.items() if uid in (v.get("buyer_id"), v.get("seller_id"))}
 
-    # =========================================================================
-    #  ORDERS  (the one that was failing)
-    # =========================================================================
-    if tab == "orders":
-        storage.expire_stale_pending_orders(expire_seconds=900)
-        orders = storage.list_orders_for_user(uid)
-        if not orders:
-            txt = "📦 *Orders*\n\n_No orders yet._"
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Refresh", callback_data="menu:orders"),
-                 InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
+        for k, v in user_threads.items():
+            # Skip if the user has already 'deleted' (hidden) this thread locally
+            if uid in v.get("hidden_from", []):
+                continue
+
+            product_name = v.get("product", {}).get("name", "Unknown Item")
+            
+            # Create a row with: [ Open Chat ] [ Delete ]
+            buttons.append([
+                InlineKeyboardButton(f"💬 {product_name}", callback_data=f"chat:open:{k}"),
+                InlineKeyboardButton(f"🗑", callback_data=f"chat:delete:{k}")
             ])
+
+        buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+        
+        msg_text = "💌 *Your Conversations*\n" + "━" * 15 + "\n"
+        if len(buttons) <= 1: # Only 'Home' button exists
+            msg_text += "_No active messages._"
+            
+        return await safe_edit(msg_text, InlineKeyboardMarkup(buttons))
+    
+    if tab == "orders":
+            # 1. Cleanup old unpaid orders
+            storage.expire_stale_pending_orders(expire_seconds=900)
+
+            orders = storage.list_orders_for_user(uid)
+
+            if not orders:
+                txt = "📦 *Orders*\n\nNo orders yet."
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
+                return await safe_edit(txt, kb)
+
+            # 2. Sort by newest first
+            orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
+
+            lines = ["📦 *Your Order History*", "━" * 15]
+            buttons = []
+
+            for o in orders[:15]:
+                oid = o.get("id", "unknown")
+                item = o.get("item", "Product")
+                qty = o.get("qty", 1)
+                amt = float(o.get("amount", 0))
+                status = str(o.get("status", "pending")).lower()
+                
+                status_map = {
+                    "pending": "⏳ Awaiting Payment",
+                    "escrow_hold": "🔒 Held in Escrow",
+                    "completed": "✅ Completed",
+                    "disputed": "⚖️ Under Dispute",
+                    "refunded": "💰 Refunded",
+                    "cancelled": "❌ Cancelled",
+                    "expired": "❓ Expired"
+                }
+                status_text = status_map.get(status, f"❓ {status.title()}")
+
+                lines.append(f"\n🆔 `{oid}`\n└ {item} (x{qty}) — `${amt:.2f}`\n   Status: *{status_text}*")
+
+                # --- 3. Action Buttons ---
+                
+                # Active Escrow: Buyer can release funds or dispute
+                if status == "escrow_hold":
+                    buttons.append([
+                        InlineKeyboardButton(f"🤝 Confirm Receipt {oid}", callback_data=f"order_complete:{oid}")
+                    ])
+                    buttons.append([
+                        InlineKeyboardButton(f"⚠️ Dispute / Chat", callback_data=f"chat:order:{oid}")
+                    ])
+                
+                # Completed: Buyer can still dispute if something is wrong
+                elif status == "completed":
+                    buttons.append([
+                        InlineKeyboardButton(f"⚖️ Dispute Completed Order {oid}", callback_data=f"dispute_after:{oid}"),
+                        InlineKeyboardButton(f"🗄 Archive", callback_data=f"orderarchive:{oid}")
+                    ])
+                # Escrow Holding
+                if status == "escrow_hold":
+                    buttons.append([InlineKeyboardButton(f"📦 Mark Shipped {oid}",
+                                                        callback_data=f"seller:ship:{oid}")])
+                elif status == "shipped":
+                    buttons.append([InlineKeyboardButton(f"✅ Mark Received {oid}",
+                                                        callback_data=f"order_complete:{oid}")])
+
+                # Pending: Only option is to cancel
+                elif status in ("pending", "awaiting_payment"):
+                    buttons.append([
+                        InlineKeyboardButton(f"❌ Cancel {oid}", callback_data=f"ordercancel:{oid}")
+                    ])
+
+                # Other finished states: Just archive
+                elif status in ("refunded", "cancelled", "expired"):
+                    buttons.append([
+                        InlineKeyboardButton(f"🗄 Archive {oid}", callback_data=f"orderarchive:{oid}")
+                    ])
+
+            txt = "\n".join(lines)
+            buttons.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu:main")])
+            
+            kb = InlineKeyboardMarkup(buttons)
             return await safe_edit(txt, kb)
 
-        orders = sorted(orders, key=lambda o: int(o.get("ts", 0)), reverse=True)
-        lines, buttons = ["📦 *Your Order History*"], []
-
-        for o in orders[:12]:
-            oid   = o.get("id", "???")
-            item  = o.get("item", "Product")
-            qty   = o.get("qty", 1)
-            amt   = float(o.get("amount", 0))
-            stat  = str(o.get("status", "pending")).lower()
-            lines.append(f"{emoji.get(stat, '❓')} `{oid}`  {item} ×{qty}  ‑  *${amt:.2f}*")
-
-            row = [InlineKeyboardButton("💬 Chat", callback_data=f"chat:order:{oid}")]
-            if stat in ("pending", "awaiting_payment"):
-                row.append(InlineKeyboardButton("❌ Cancel", callback_data=f"ordercancel:{oid}"))
-            elif stat in ("escrow_hold", "shipped"):
-                row.append(InlineKeyboardButton("✅ Received", callback_data=f"order_complete:{oid}"))
-            elif stat == "completed":
-                row.append(InlineKeyboardButton("⚖️ Dispute", callback_data=f"dispute_after:{oid}"))
-            elif stat in ("refunded", "cancelled", "expired"):
-                row.append(InlineKeyboardButton("🗄 Archive", callback_data=f"orderarchive:{oid}"))
-            buttons.append(row)
-
-            # seller extras
-            if int(o.get("seller_id", 0)) == uid:
-                s_row = []
-                if stat == "escrow_hold":
-                    s_row.append(InlineKeyboardButton("📦 Ship", callback_data=f"seller:ship:{oid}"))
-                if stat in ("disputed", "completed", "refunded", "cancelled", "expired"):
-                    s_row.append(InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{oid}"))
-                if s_row:
-                    buttons.append(s_row)
-
-        buttons.append([
-            InlineKeyboardButton("🔄 Refresh", callback_data="menu:orders"),
-            InlineKeyboardButton("🏠 Main Menu", callback_data="menu:orders:main")
-        ])
-        return await safe_edit("\n".join(lines), InlineKeyboardMarkup(buttons))
-
-    # =========================================================================
-    #  SELL
-    # =========================================================================
     if tab == "sell":
         txt, kb = seller.build_seller_menu(storage.get_role(uid))
         return await safe_edit(txt, kb)
 
-    # =========================================================================
-    #  FUNCTIONS
-    # =========================================================================
-   
     if tab == "functions":
         return await show_functions_menu(update, context)
 
-    # =========================================================================
-    #  MAIN / REFRESH
-    # =========================================================================
     if tab in ("main", "refresh"):
         kb, txt = build_main_menu(storage.get_balance(uid), uid)
         return await safe_edit(txt, kb)
 
-    # unknown tab – go home
-    kb, txt = build_main_menu(storage.get_balance(uid), uid)
-    return await safe_edit(txt, kb)
+
+    
+# ==========================================
+# Handling Post-Completion Disputes
+# ==========================================
+
+async def handle_post_completion_dispute(update, context, oid):
+    query = update.callback_query
+    uid = update.effective_user.id
+    
+    # Update status to disputed so it appears in the Admin Panel
+    storage.update_order_status(oid, "disputed")
+    
+    # Notify Admin (Assuming you have an ADMIN_ID variable)
+    admin_msg = (
+        f"🚨 **URGENT: Post-Completion Dispute**\n\n"
+        f"Order ID: `{oid}`\n"
+        f"User: `{uid}`\n"
+        f"Note: This order was already marked as COMPLETED. "
+        f"Admin intervention required to check seller balance."
+    )
+    
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode="Markdown")
+    except:
+        pass
+
+    await query.answer("⚖️ Dispute filed. An admin will review this transaction.", show_alert=True)
+    return await on_menu(update, context, force_tab="orders")
+
+# ==========================================
+# Chat Delete
+# ==========================================
+
+# New helper function in ui.py
+async def show_messages_menu(update, context):
+    uid = update.effective_user.id
+    threads = storage.load_json(storage.MESSAGES_FILE)
+    buttons = []
+    
+    for k, v in threads.items():
+        # Check if current user is part of chat AND hasn't hidden it
+        if uid in (v.get("buyer_id"), v.get("seller_id")):
+            if uid in v.get("hidden_from", []):
+                continue
+                
+            name = v.get("product", {}).get("name", "Chat")
+            buttons.append([
+                InlineKeyboardButton(f"💬 {name}", callback_data=f"chat:open:{k}"),
+                InlineKeyboardButton("🗑", callback_data=f"chat:delete:{k}")
+            ])
+
+    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+    
+    text = "💌 *Your Messages*\n" + "━" * 15
+    kb = InlineKeyboardMarkup(buttons)
+    
+    # Handle both message and callback_query updates
+    if update.callback_query:
+        return await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        return await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
+
+# ==========================================
+# File Order Disputes
+# ==========================================
+
+async def file_order_dispute(update, context, oid):
+    q = update.callback_query
+    uid = update.effective_user.id
+    
+    # Update the status in storage
+    # This assumes your storage.update_order_status handles finding the order by ID
+    success = storage.update_order_status(oid, "disputed")
+    
+    if success:
+        await q.answer("⚖️ Dispute filed. An admin will review this order.", show_alert=True)
+        # Notify Admin (Optional but recommended)
+        try:
+            await context.bot.send_message(
+                ADMIN_ID, 
+                f"⚠️ **NEW DISPUTE FILED**\nOrder ID: `{oid}`\nBy User: `{uid}`"
+            )
+        except:
+            pass
+    else:
+        await q.answer("❌ Could not file dispute. Order not found.", show_alert=True)
+    
+    # Refresh the orders page
+    return await on_menu(update, context, force_tab="orders")
+
+# ==========================================
+# FUNCTIONS PANEL
+# ==========================================
+async def show_functions_menu(update, context):
+    q = update.callback_query
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Disputes (Admin)", callback_data="admin:disputes")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+
+    await q.edit_message_text(
+        "⚙️ *Functions Panel*\nAdmin tools + utilities.",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+async def admin_open_disputes(update, context):
+    q = update.callback_query
+    uid = update.effective_user.id
+
+    if uid != ADMIN_ID:
+        return await q.answer("🚫 Access Denied", show_alert=True)
+
+    # Load data
+    all_orders_data = storage.load_json(storage.ORDERS_FILE)
+    
+    # FIX: Check if it's a dict. If so, iterate over the values (the actual order objects)
+    if isinstance(all_orders_data, dict):
+        all_orders = list(all_orders_data.values())
+    else:
+        all_orders = all_orders_data
+
+    disputed = [o for o in all_orders if isinstance(o, dict) and o.get("status") in ["disputed", "escrow", "paid"]]
+
+    if not disputed:
+        return await q.edit_message_text(
+            "⚖️ *Admin Dispute Panel*\n\n✅ No active disputes found.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]]),
+            parse_mode="Markdown"
+        )
+
+    lines = ["⚖️ *Active Disputes/Escrow*"]
+    buttons = []
+
+    for o in disputed[:10]:
+        oid = o.get('id', '???')
+        amt = o.get('amount', 0)
+        lines.append(f"\n📦 `ID: {oid}`\n💰 `${float(amt):.2f}` | 👤 Buyer: `{o.get('buyer_id')}`")
+        
+        buttons.append([
+            InlineKeyboardButton(f"✅ Release {oid}", callback_data=f"admin_release:{oid}"),
+            InlineKeyboardButton(f"💰 Refund {oid}", callback_data=f"admin_refund:{oid}")
+        ])
+
+    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
+
+    await q.edit_message_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown"
+    )
+
+async def admin_release(update, context, oid):
+    # Logic to finalize order and move funds to seller's balance
+    success = storage.update_order_status(oid, "completed")
+    if success:
+        await update.callback_query.answer(f"✅ Order {oid} released to seller!", show_alert=True)
+    else:
+        await update.callback_query.answer("❌ Error updating order.", show_alert=True)
+    return await admin_open_disputes(update, context)
+
+async def admin_refund(update, context, oid):
+    # 1. Update status to 'refunded'
+    success = storage.update_order_status(oid, "refunded")
+    
+    if success:
+        # 2. Logic to actually credit the buyer's balance should be inside 
+        # storage.update_order_status or called here:
+        # storage.adjust_balance(buyer_id, amount)
+        
+        await update.callback_query.answer(f"💰 Order {oid} refunded!", show_alert=True)
+        
+        # 3. Notify the Buyer automatically
+        order_data = storage.get_order_by_id(oid) # Assuming you have this helper
+        if order_data:
+            try:
+                await context.bot.send_message(
+                    chat_id=order_data['buyer_id'],
+                    text=f"⚖️ **Dispute Resolved**: Order `{oid}` has been refunded to your wallet."
+                )
+            except:
+                pass
+    else:
+        await update.callback_query.answer("❌ Error: Order not found.", show_alert=True)
+    
+    return await admin_open_disputes(update, context)

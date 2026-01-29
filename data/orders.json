@@ -159,51 +159,72 @@
     "inv_reserved": false,
     "inv_deducted": true
   },
-  "ord_1769487045": {
-    "id": "ord_1769487045",
+  "ord_1769408762": {
+    "id": "ord_1769408762",
+    "item": "sku_1336081032_1768978998",
+    "qty": 1,
+    "amount": 1.0,
+    "method": "smart_glocal_cart_item",
+    "seller_id": 1336081032,
+    "buyer_id": 795927036,
+    "status": "failed",
+    "ts": 1769408762,
+    "sku": "sku_1336081032_1768978998",
+    "inv_qty": 1,
+    "inv_reserved": false,
+    "inv_deducted": false,
+    "cart_child_orders": [
+      "ord_1769408762"
+    ],
+    "inv_reason": "cart_checkout_failed",
+    "status_reason": "Currency_total_amount_invalid"
+  },
+  "ord_1769408794": {
+    "id": "ord_1769408794",
     "item": "cat",
     "qty": 1,
     "amount": 15.0,
-    "method": "smart_glocal",
+    "method": "smart_glocal_cart_item",
     "seller_id": 0,
     "buyer_id": 1336081032,
-    "status": "expired",
-    "ts": 1769487045,
+    "status": "pending",
+    "ts": 1769408794,
     "sku": "cat",
     "inv_qty": 1,
     "inv_reserved": true,
     "inv_deducted": false,
-    "expired_at": 1769495895
+    "cart_child_orders": [
+      "ord_1769408794"
+    ]
   },
-  "ord_1769487475": {
-    "id": "ord_1769487475",
-    "item": "Cart",
+  "ord_1769408797": {
+    "id": "ord_1769408797",
+    "item": "cat",
     "qty": 1,
     "amount": 15.0,
-    "method": "stripe_cart",
+    "method": "redsys_cart_item",
     "seller_id": 0,
     "buyer_id": 1336081032,
-    "status": "expired",
-    "ts": 1769487475,
+    "status": "pending",
+    "ts": 1769408797,
     "sku": "cat",
     "inv_qty": 1,
     "inv_reserved": true,
     "inv_deducted": false,
-    "expired_at": 1769495895
+    "cart_child_orders": [
+      "ord_1769408797"
+    ]
   },
-  "ord_1769498943": {
-    "id": "ord_1769498943",
-    "item": "Cart",
+  "ord_1769408800": {
+    "id": "ord_1769408800",
+    "item": "Cart Items",
     "qty": 1,
-    "amount": 1.0,
-    "method": "stripe_cart",
+    "amount": 15.0,
+    "method": "HitPay",
     "seller_id": 0,
-    "buyer_id": 795927036,
-    "status": "pending",
-    "ts": 1769498943,
-    "sku": "sku_1336081032_1768978998",
-    "inv_qty": 1,
-    "inv_reserved": true,
-    "inv_deducted": false
+    "buyer_id": 1336081032,
+    "status": "failed",
+    "ts": 1769408800,
+    "status_reason": "400 Client Error: Bad Request for url: https://unshielded-unpunishingly-rebecca.ngrok-free.dev/hitpay/create_payment"
   }
 }
