@@ -771,7 +771,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await chat.on_chat_from_order(update, context, order_id)
 
         if data.startswith("chat:open:"):
-            return await chat.on_chat_open(update, context, data.split(":")[1])
+            _, _, thread_id = data.partition(":")
+            return await chat.on_chat_open(update, context, thread_id)
 
         if data.startswith("chat:delete:"):
             thread_id = data.split(":")[2]
