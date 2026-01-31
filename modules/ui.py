@@ -224,18 +224,15 @@ async def show_search_results(update, context, results):
         )
 
         view_btn = InlineKeyboardButton(f"🔎 View {str(name)[:12]}", callback_data=f"view_item:{sku}")
-        row = [view_btn]
 
         if stock > 0:
             cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
-            row.append(cart_btn)
-        
-        rows.append(row)
-
-        # MESSAGE SELLER BUTTON (only for non-system sellers)
-        if sid != 0:
-            msg_btn = InlineKeyboardButton(f"💬 Message Seller", callback_data=f"contact:{sku}:{sid}")
-            rows.append([msg_btn])
+            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+            rows.append([view_btn, cart_btn, msg_btn])
+        else:
+            # no add-to-cart button when sold out, just view and message
+            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+            rows.append([view_btn, msg_btn])
 
 
     rows.append([InlineKeyboardButton("🔍 Search Again", callback_data="shop:search")])
@@ -336,16 +333,9 @@ def build_shop_keyboard(uid=None, page=0):
         if viewer_id == sid:
             rows.append([view_btn])                      # only "View"
         else:
-            if stock > 0:
-                cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
-                rows.append([view_btn, cart_btn])
-            else:
-                rows.append([view_btn])
-            
-            # MESSAGE SELLER BUTTON (only for non-system sellers)
-            if sid != 0:
-                msg_btn = InlineKeyboardButton(f"💬 Message", callback_data=f"contact:{sku}:{sid}")
-                rows.append([msg_btn])
+            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+            rows.append([view_btn, cart_btn, msg_btn])   # 3 buttons in one row
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
@@ -403,19 +393,14 @@ async def view_item_details(update, context, sku):
             [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
         ])
     else:
-        buttons = [
+        kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
-                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
-            ]
-        ]
-        
-        # MESSAGE SELLER BUTTON (only for non-system sellers)
-        if seller_id != 0:
-            buttons.append([InlineKeyboardButton("💬 Message Seller", callback_data=f"contact:{sku}:{seller_id}")])
-        
-        buttons.append([InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")])
-        kb = InlineKeyboardMarkup(buttons)
+                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1"),
+                InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{seller_id}")
+            ],
+            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
+        ])
 
     if item.get("image_url"):
         await q.message.delete()
