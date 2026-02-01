@@ -199,8 +199,11 @@ async def show_add_to_cart_feedback(update, context, sku, source="shop"):
     # ➜  guard against "Message is not modified" crash
     # Detect if current message is a photo (product image) or plain text
     is_photo = bool(q.message.photo)
+    # Detect if current message is a photo (product with image)
+    is_photo = bool(q.message.photo)
     current_text = (q.message.caption if is_photo else q.message.text) or ""
     current_kb   = q.message.reply_markup
+    
     if current_text == text and (current_kb is None or current_kb.to_dict() == kb.to_dict()):
         return await q.answer()
 

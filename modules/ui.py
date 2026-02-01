@@ -329,13 +329,10 @@ def build_shop_keyboard(uid=None, page=0):
 
         view_btn = InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}")
 
-        # OWNER CAN'T BUY OWN ITEM
-        if viewer_id == sid:
-            rows.append([view_btn])                      # only "View"
-        else:
-            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
-            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
-            rows.append([view_btn, cart_btn, msg_btn])   # 3 buttons in one row
+        # SHOW CART BUTTONS FOR ALL ITEMS (including your own)
+        cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+        msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+        rows.append([view_btn, cart_btn, msg_btn])
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
