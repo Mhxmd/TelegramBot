@@ -386,7 +386,7 @@ async def view_item_details(update, context, sku):
         f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
     )
 
-    # Always show cart buttons (even for your own products)
+    # Always show Add to Cart buttons (even for own items), plus Analytics if owner
     buttons = [
         [
             InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
