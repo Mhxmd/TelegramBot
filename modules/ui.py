@@ -386,21 +386,21 @@ async def view_item_details(update, context, sku):
         f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
     )
 
-    # GUARD: seller can’t buy own item
+    # Always show cart buttons (even for your own products)
+    buttons = [
+        [
+            InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
+            InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1"),
+            InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{seller_id}")
+        ]
+    ]
+    
+    # If this is the seller's own item, also show Analytics button at top
     if uid == seller_id:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{sku}")],
-            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
-        ])
-    else:
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
-                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1"),
-                InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{seller_id}")
-            ],
-            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
-        ])
+        buttons.insert(0, [InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{sku}")])
+    
+    buttons.append([InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")])
+    kb = InlineKeyboardMarkup(buttons)
 
     if item.get("image_url"):
         await q.message.delete()
