@@ -6,7 +6,6 @@
 from datetime import time
 import os
 import logging
-from telegram import user_id
 from dotenv import load_dotenv
 from telegram import Update, LabeledPrice, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
