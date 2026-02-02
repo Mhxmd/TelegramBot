@@ -550,3 +550,17 @@ def create_thread(buyer_id: int, seller_id: int, product: dict) -> str:
 
 def get_thread(thread_id: str) -> dict | None:
     return load_json(MESSAGES_FILE).get(thread_id)
+
+# =========================================================
+# Update specific order fields (status, timestamps, etc.)
+# =========================================================
+def update_order_meta(order_id, **kwargs):
+    orders = load_json(ORDERS_FILE)
+    
+    if order_id in orders:
+        for key, value in kwargs.items():
+            orders[order_id][key] = value
+            
+        save_json(ORDERS_FILE, orders)
+        return True
+    return False
