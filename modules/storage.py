@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple, Set, Optional
 # Initialize the global dictionary to store user carts
 CART_FILE = "data/cart.json"
 
+
 def _ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
     if parent:

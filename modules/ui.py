@@ -227,10 +227,12 @@ async def show_search_results(update, context, results):
 
         if stock > 0:
             cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}")
-            rows.append([view_btn, cart_btn])
+            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+            rows.append([view_btn, cart_btn, msg_btn])
         else:
-            # no add-to-cart button when sold out
-            rows.append([view_btn])
+            # no add-to-cart button when sold out, just view and message
+            msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+            rows.append([view_btn, msg_btn])
 
 
     rows.append([InlineKeyboardButton("🔍 Search Again", callback_data="shop:search")])
@@ -327,12 +329,10 @@ def build_shop_keyboard(uid=None, page=0):
 
         view_btn = InlineKeyboardButton(f"🔎 View {it['name'][:12]}", callback_data=f"view_item:{sku}")
 
-        # OWNER CAN’T BUY OWN ITEM
-        if viewer_id == sid:
-            rows.append([view_btn])                      # only “View”
-        else:
-            cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
-            rows.append([view_btn, cart_btn])            # normal two buttons
+        # SHOW CART BUTTONS FOR ALL ITEMS (including your own)
+        cart_btn = InlineKeyboardButton(f"🛒 +Cart (${price:.2f})", callback_data=f"cart:add:{sku}:shop")
+        msg_btn = InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{sid}")
+        rows.append([view_btn, cart_btn, msg_btn])
 
     # Navigation & Footer
     nav = [InlineKeyboardButton(f"Page {page+1}", callback_data="noop")]
@@ -383,20 +383,21 @@ async def view_item_details(update, context, sku):
         f"📝 **Description:**\n_{item.get('desc', 'No description provided.')}_"
     )
 
-    # GUARD: seller can’t buy own item
+    # Always show Add to Cart buttons (even for own items), plus Analytics if owner
+    buttons = [
+        [
+            InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
+            InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1"),
+            InlineKeyboardButton("💬 Message", callback_data=f"contact:{sku}:{seller_id}")
+        ]
+    ]
+    
+    # If this is the seller's own item, also show Analytics button at top
     if uid == seller_id:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{sku}")],
-            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
-        ])
-    else:
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(add_label, callback_data=f"cart:add:{sku}:view"),
-                InlineKeyboardButton("💰 Buy Now", callback_data=f"buy:{sku}:1")
-            ],
-            [InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")]
-        ])
+        buttons.insert(0, [InlineKeyboardButton("📊 Analytics", callback_data=f"analytics:single:{sku}")])
+    
+    buttons.append([InlineKeyboardButton("🔙 Back to Marketplace", callback_data="menu:shop")])
+    kb = InlineKeyboardMarkup(buttons)
 
     if item.get("image_url"):
         await q.message.delete()
