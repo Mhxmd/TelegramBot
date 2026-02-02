@@ -940,7 +940,7 @@ async def show_functions_menu(update, context):
 # ==========================================
 # Admin Dispute Dashboard  (links from Functions)
 # ==========================================
-async def admin_dispute_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_open_disputes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
 
