@@ -621,35 +621,42 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- SOLANA CRYPTO CHECKOUT (PHASE 1: REVIEW) ---
         if data.startswith("pay_crypto:solana:"):
             parts = data.split(":")
-            # parts[2] is USD, parts[3] is SKU
+            # parts format: pay_crypto:solana:amount:sku:network
             usd_val = float(parts[2])
             target_sku = parts[3] if len(parts) > 3 else "Cart"
             
-            sol_price = 150.0  # rate
-            sol_needed = usd_val / sol_price
+            # Identify the network from the button click
+            # We map 'devnet' to 'Devnet-Beta' for the display text
+            raw_network = parts[4] if len(parts) > 4 else "devnet"
+            display_network = "Devnet-Beta" if raw_network == "devnet" else "Mainnet"
             
+            # 1. Get Live Price
+            current_price = get_live_sol_price()
+            sol_needed = usd_val / current_price
+            
+            # 2. Check balance on the specific network selected
             user_wallet = wallet.ensure_user_wallet(user_id) 
-            balance = wallet.get_balance_devnet(user_wallet["public_key"])
+            balance = wallet.get_balance(user_wallet["public_key"], network=raw_network)
             
             if balance < sol_needed:
-                return await q.answer(f"❌ Insufficient SOL. Need {sol_needed:.4f}", show_alert=True)
+                return await q.answer(f"❌ Insufficient {display_network} SOL. Need {sol_needed:.4f}", show_alert=True)
 
+            # 3. Build Confirmation Keyboard - Passing the network to the next phase
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Confirm SOL Payment", 
-                    callback_data=f"confirm_crypto_pay:solana:{usd_val}:{target_sku}")],
+                [InlineKeyboardButton(f"✅ Confirm {display_network} Payment", 
+                    callback_data=f"confirm_crypto_pay:solana:{usd_val}:{target_sku}:{raw_network}")],
                 [InlineKeyboardButton("❌ Cancel", callback_data="cart:view")]
             ])
             
             return await q.edit_message_text(
-                f"💎 *Solana Checkout*\n\n"
+                f"💎 *Solana Checkout ({display_network})*\n\n"
                 f"Item: `{target_sku}`\n"
+                f"Rate: `1 SOL = ${current_price:.2f}`\n"
                 f"Total: *${usd_val:.2f}* ({sol_needed:.4f} SOL)\n\n"
-                "Confirm payment from your bot wallet?",
+                f"Confirm payment from your bot wallet?",
                 parse_mode="Markdown",
                 reply_markup=kb
             )
-        
-                # NEW: user picked a network
 
         # ---------- WITHDRAW (dual-network) ----------
         if data.startswith("withdraw:"):
@@ -662,13 +669,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
 
-# --- CRYPTO EXECUTION (PHASE 2: SENDING) ---
+        # --- CRYPTO EXECUTION (PHASE 2: SENDING) ---
         if data.startswith("confirm_crypto_pay:"):
             parts = data.split(":")
             # parts format: confirm_crypto_pay:solana:amount:sku:network
             usd_amt = float(parts[2])
             target_sku = parts[3] if len(parts) > 3 else "Cart"
-            selected_network = parts[4] if len(parts) > 4 else "mainnet-beta"
+            # Now correctly pulls the network passed from Phase 1
+            selected_network = parts[4] if len(parts) > 4 else "devnet"
+            display_network = "Devnet-Beta" if selected_network == "devnet" else "Mainnet"
             
             # 1. Fetch Live Price and Calculate Amount
             current_price = get_live_sol_price()
@@ -678,23 +687,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_wallet = wallet.ensure_user_wallet(user_id)
             user_pubkey = user_wallet["public_key"]
 
-            # --- NEW: BALANCE CHECK ---
-            # This checks the specific network (devnet/mainnet) before trying to send
+            # 3. Final Balance Check before sending
             user_balance = wallet.get_balance(user_pubkey, network=selected_network)
             
             if user_balance < sol_amt:
                 shortfall = sol_amt - user_balance
                 return await q.edit_message_text(
-                    f"⚠️ *Insufficient Funds ({selected_network})*\n\n"
+                    f"⚠️ *Insufficient Funds ({display_network})*\n\n"
                     f"Required: `{sol_amt:.5f} SOL`\n"
                     f"Your Balance: `{user_balance:.5f} SOL`\n"
-                    f"You need `{shortfall:.5f} SOL` more.\n\n"
                     f"Address: `{user_pubkey}`",
                     parse_mode="Markdown"
                 )
-            # --------------------------
 
-            # 3. Identify the seller
+            # 4. Identify the seller
             if target_sku == "Cart":
                 cart_items = shopping_cart.get_cart(user_id)
                 if not cart_items:
@@ -711,7 +717,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             seller_wallet = wallet.ensure_user_wallet(seller_id)
             dest_addr = seller_wallet["public_key"] 
             
-            # 4. Perform Transfer
+            # 5. Perform Transfer
             result = wallet.send_sol(
                 user_wallet["private_key"], 
                 dest_addr, 
@@ -726,18 +732,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target_sku == "Cart":
                 shopping_cart.clear_cart(user_id)
             
-            storage.add_order(user_id, f"Direct: {first_item_sku}", 1, usd_amt, f"Solana ({selected_network})", seller_id)
+            storage.add_order(user_id, f"Direct: {first_item_sku}", 1, usd_amt, f"Solana ({display_network})", seller_id)
             
             kb_back = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
             success_msg = (
                 f"✅ *Payment Sent!*\n\n"
-                f"Network: `{selected_network}`\n"
+                f"Network: `{display_network}`\n"
                 f"Rate: `1 SOL = ${current_price:.2f}`\n"
                 f"Total Paid: `{sol_amt:.5f} SOL`\n"
                 f"TX ID: `{result}`"
             )
-            return await q.edit_message_text(success_msg, parse_mode="Markdown", reply_markup=kb_back)
-            
             return await q.edit_message_text(success_msg, parse_mode="Markdown", reply_markup=kb_back)
         # ESCROW SYSTEM
         if data.startswith("payconfirm:"):

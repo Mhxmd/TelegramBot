@@ -312,7 +312,6 @@ async def view_cart(update, context):
     rows.append([InlineKeyboardButton("🇪🇸 Redsys (Cart)", callback_data=f"redsys_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay) (Cart)", callback_data=f"hitpay_cart:{total:.2f}")])
     rows.append([
-        InlineKeyboardButton("🚀 Pay Mainnet (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart:mainnet"),
         InlineKeyboardButton("🧪 Pay Devnet-Beta", callback_data=f"pay_crypto:solana:{total:.2f}:Cart:devnet")
     ])
     # footer
