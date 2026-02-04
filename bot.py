@@ -862,6 +862,7 @@ def get_live_sol_price():
         print(f"Price Fetch Error: {e}")
         return 150.0  # Fallback price if the API is down so your bot doesn't crash
 
+
 # ==========================
 # MESSAGE ROUTER
 # ==========================

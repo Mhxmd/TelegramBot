@@ -156,6 +156,7 @@ def _is_mini_panel(text):
     return text and "Added to cart!" in text
 
 
+
 async def show_add_to_cart_feedback(update, context, sku, source="shop"):
     q = update.callback_query
     uid = update.effective_user.id
@@ -310,8 +311,10 @@ async def view_cart(update, context):
     rows.append([InlineKeyboardButton("🌐 Smart Glocal (Cart)", callback_data=f"smart_glocal_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🇪🇸 Redsys (Cart)", callback_data=f"redsys_cart:{total:.2f}")])
     rows.append([InlineKeyboardButton("🇸🇬 PayNow (HitPay) (Cart)", callback_data=f"hitpay_cart:{total:.2f}")])
-    rows.append([InlineKeyboardButton("🚀 Pay with Solana (SOL) (Cart)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart")])
-
+    rows.append([
+        InlineKeyboardButton("🚀 Pay Mainnet (SOL)", callback_data=f"pay_crypto:solana:{total:.2f}:Cart:mainnet"),
+        InlineKeyboardButton("🧪 Pay Devnet-Beta", callback_data=f"pay_crypto:solana:{total:.2f}:Cart:devnet")
+    ])
     # footer
     rows.append([InlineKeyboardButton("🧹 Clear All", callback_data="cart:clear_all")])
     rows.append([InlineKeyboardButton("🏠 Menu", callback_data="menu:main")])
