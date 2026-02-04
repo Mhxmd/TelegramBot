@@ -668,9 +668,33 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # parts format: confirm_crypto_pay:solana:amount:sku:network
             usd_amt = float(parts[2])
             target_sku = parts[3] if len(parts) > 3 else "Cart"
-            # Get network from callback, or default to mainnet-beta if missing
             selected_network = parts[4] if len(parts) > 4 else "mainnet-beta"
             
+            # 1. Fetch Live Price and Calculate Amount
+            current_price = get_live_sol_price()
+            sol_amt = usd_amt / current_price 
+
+            # 2. Setup Wallets
+            user_wallet = wallet.ensure_user_wallet(user_id)
+            user_pubkey = user_wallet["public_key"]
+
+            # --- NEW: BALANCE CHECK ---
+            # This checks the specific network (devnet/mainnet) before trying to send
+            user_balance = wallet.get_balance(user_pubkey, network=selected_network)
+            
+            if user_balance < sol_amt:
+                shortfall = sol_amt - user_balance
+                return await q.edit_message_text(
+                    f"⚠️ *Insufficient Funds ({selected_network})*\n\n"
+                    f"Required: `{sol_amt:.5f} SOL`\n"
+                    f"Your Balance: `{user_balance:.5f} SOL`\n"
+                    f"You need `{shortfall:.5f} SOL` more.\n\n"
+                    f"Address: `{user_pubkey}`",
+                    parse_mode="Markdown"
+                )
+            # --------------------------
+
+            # 3. Identify the seller
             if target_sku == "Cart":
                 cart_items = shopping_cart.get_cart(user_id)
                 if not cart_items:
@@ -679,13 +703,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 first_item_sku = target_sku
 
-            # 1. Fetch Live Price and Calculate
-            current_price = get_live_sol_price()
-            sol_amt = usd_amt / current_price 
-
-            # 2. Identify the seller
             seller_id_str, product_data = storage.get_seller_product_by_sku(first_item_sku)
-
             if not product_data:
                 return await q.edit_message_text(f"❌ Product data for {first_item_sku} missing.")
 
@@ -693,10 +711,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             seller_wallet = wallet.ensure_user_wallet(seller_id)
             dest_addr = seller_wallet["public_key"] 
             
-            # 3. Perform Transfer
-            user_wallet = wallet.ensure_user_wallet(user_id)
-            
-            # We pass the 'selected_network' to fix your positional argument error
+            # 4. Perform Transfer
             result = wallet.send_sol(
                 user_wallet["private_key"], 
                 dest_addr, 
@@ -707,21 +722,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if isinstance(result, dict) and "error" in result:
                 return await q.edit_message_text(f"❌ Transaction Failed: {result['error']}")
             
-            # Cleanup
+            # Cleanup & Order Logging
             if target_sku == "Cart":
                 shopping_cart.clear_cart(user_id)
             
             storage.add_order(user_id, f"Direct: {first_item_sku}", 1, usd_amt, f"Solana ({selected_network})", seller_id)
             
             kb_back = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
-            
             success_msg = (
                 f"✅ *Payment Sent!*\n\n"
                 f"Network: `{selected_network}`\n"
                 f"Rate: `1 SOL = ${current_price:.2f}`\n"
-                f"Total Paid: `{sol_amt:.5f} SOL` (${usd_amt})\n\n"
+                f"Total Paid: `{sol_amt:.5f} SOL`\n"
                 f"TX ID: `{result}`"
             )
+            return await q.edit_message_text(success_msg, parse_mode="Markdown", reply_markup=kb_back)
             
             return await q.edit_message_text(success_msg, parse_mode="Markdown", reply_markup=kb_back)
         # ESCROW SYSTEM
