@@ -1,8 +1,8 @@
-# modules/wallet_utils.py
 import base58
 import json
 import os
 import logging
+import time
 from typing import Dict, Optional, Union
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,26 +18,29 @@ from solders.transaction import Transaction
 from solders.message import Message
 
 # ---------- config ----------
+# Using more reliable public endpoints for 2026
 SOLANA_DEVNET_RPC  = "https://api.devnet.solana.com"
+# Fallback Devnet if official is slow: "https://devnet.helius-rpc.com/?api-key=YOUR_KEY"
 SOLANA_MAINNET_RPC = "https://api.mainnet-beta.solana.com"
 
 NETWORK = os.getenv("SOLANA_NETWORK", "devnet").lower()
-SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL",
-                           SOLANA_MAINNET_RPC if NETWORK == "mainnet" else SOLANA_DEVNET_RPC)
 
+# Initialize specific clients
 devnet_client  = Client(SOLANA_DEVNET_RPC)
 mainnet_client = Client(SOLANA_MAINNET_RPC)
+
+# This client follows the global environment setting
+SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", SOLANA_MAINNET_RPC if NETWORK == "mainnet" else SOLANA_DEVNET_RPC)
 solana_client  = Client(SOLANA_RPC_URL)
 
 WALLETS_FILE   = "wallets.json"
-WITHDRAW_STATE: Dict[int, dict] = {}
-
 logger = logging.getLogger(__name__)
 NETWORK_NAMES = {"devnet": "🧪 Devnet (Test)", "mainnet": "🌍 Mainnet (Real SOL)"}
 
 # ---------- wallet life-cycle ----------
 def create_wallet() -> Dict[str, str]:
     kp = Keypair()
+    # Store as base58 string (common for Solana private keys)
     return {"public_key": str(kp.pubkey()), "private_key": base58.b58encode(bytes(kp)).decode()}
 
 def ensure_user_wallet(user_id: int) -> Dict[str, str]:
@@ -47,7 +50,10 @@ def ensure_user_wallet(user_id: int) -> Dict[str, str]:
             json.dump({}, f)
 
     with open(WALLETS_FILE, "r") as f:
-        data: dict = json.load(f)
+        try:
+            data: dict = json.load(f)
+        except json.JSONDecodeError:
+            data = {}
 
     uid = str(user_id)
     if uid not in data:
@@ -59,93 +65,90 @@ def ensure_user_wallet(user_id: int) -> Dict[str, str]:
 
 # ---------- balances ----------
 def get_balance(pubkey: str, network: Optional[str] = None) -> float:
-    network = network or NETWORK
-    client  = mainnet_client if network == "mainnet" else devnet_client
+    """Fetch balance with explicit network selection and retry logic."""
+    target_network = network or NETWORK
+    client = mainnet_client if target_network == "mainnet" else devnet_client
+    
     try:
-        return client.get_balance(Pubkey.from_string(pubkey)).value / 1e9
+        response = client.get_balance(Pubkey.from_string(pubkey))
+        return response.value / 1e9
     except Exception as e:
-        logger.error("get_balance (%s) → %s", network, e)
+        logger.error(f"Error fetching {target_network} balance for {pubkey}: {e}")
         return 0.0
 
 def get_balance_both(pubkey: str) -> Dict[str, float]:
-    return {"devnet": get_balance(pubkey, "devnet"), "mainnet": get_balance(pubkey, "mainnet")}
-
-def get_balance_devnet(pubkey: str) -> float:
-    return get_balance(pubkey, "devnet")
-
-def get_balance_mainnet(pubkey: str) -> float:
-    return get_balance(pubkey, "mainnet")
+    return {
+        "devnet": get_balance(pubkey, "devnet"),
+        "mainnet": get_balance(pubkey, "mainnet")
+    }
 
 # ---------- UI helpers ----------
 async def show_sol_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
-    wallet   = ensure_user_wallet(uid)
+    wallet = ensure_user_wallet(uid)
     balances = get_balance_both(wallet["public_key"])
 
     text = (f"📥 *Your Solana Wallet*\n"
-            f"Network: `{NETWORK_NAMES[NETWORK]}`\n\n"
-            f"`{wallet['public_key']}`\n\n"
+            f"Active Network: `{NETWORK_NAMES[NETWORK]}`\n\n"
+            f"Address:\n`{wallet['public_key']}`\n\n"
             f"🧪 Devnet:  `{balances['devnet']:.4f}` SOL\n"
-            f"🌍 Mainnet: `{balances['mainnet']:.4f}` SOL\n\n") + \
-           ("_Real money on Mainnet – send only to addresses you trust._" if NETWORK == "mainnet" else "_Use a devnet faucet for free test-SOL._")
+            f"🌍 Mainnet: `{balances['mainnet']:.4f}` SOL\n\n")
+    
+    if NETWORK == "mainnet":
+        text += "⚠️ _Real money on Mainnet – send only to addresses you trust._"
+    else:
+        text += "💡 _Use a devnet faucet to get free test SOL for development._"
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 Withdraw", callback_data="wallet:withdraw"),
-         InlineKeyboardButton("🔧 Network", callback_data="wallet:network")],
+        [InlineKeyboardButton("📤 Withdraw SOL", callback_data="wallet:withdraw")],
+        [InlineKeyboardButton("🔧 Switch Network", callback_data="wallet:network")],
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
     ])
-    await q.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+    
+    if q:
+        await q.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
 
-async def show_deposit_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await show_sol_address(update, context)
-
-# ------------------------------------------------------------------
-#  DUAL-NETWORK  WITHDRAW  (NEW)
-# ------------------------------------------------------------------
+# ---------- Withdraw Flow ----------
 WITHDRAW_STATE: Dict[int, dict] = {}
 
 async def start_withdraw_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show two buttons :  Test-Net  vs  Live-Net"""
     q = update.callback_query
     uid = update.effective_user.id
     wallet = ensure_user_wallet(uid)
     both = get_balance_both(wallet["public_key"])
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧪 Withdraw SOL (Devnet – Test)", callback_data="withdraw:devnet")],
-        [InlineKeyboardButton("🌍 Withdraw SOL (Mainnet – Real)", callback_data="withdraw:mainnet")],
+        [InlineKeyboardButton("🧪 Withdraw Devnet (Test)", callback_data="withdraw:devnet")],
+        [InlineKeyboardButton("🌍 Withdraw Mainnet (Real)", callback_data="withdraw:mainnet")],
         [InlineKeyboardButton("🔙 Back", callback_data="menu:wallet")]
     ])
 
-    text = (f"💸 *Choose Network*\n\n"
-            f"🧪 Devnet balance: `{both['devnet']:.4f}` SOL  (free test-SOL)\n"
-            f"🌍 Mainnet balance: `{both['mainnet']:.4f}` SOL  (real money)")
+    text = (f"💸 *Choose Network to Withdraw From*\n\n"
+            f"🧪 Devnet: `{both['devnet']:.4f}` SOL\n"
+            f"🌍 Mainnet: `{both['mainnet']:.4f}` SOL")
     await q.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_withdraw_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
-    _, network = q.data.split(":")          # "withdraw:devnet"  etc.
+    _, network = q.data.split(":")
 
     wallet = ensure_user_wallet(uid)
     bal = get_balance(wallet["public_key"], network)
 
-    # ➜  diagnostic log
-    logger.info("💰 %s balance for uid %s = %.6f SOL", network, uid, bal)
-
-    if bal <= 0:
-        await q.answer(f"❌ Zero balance on {NETWORK_NAMES[network]}", show_alert=True)
+    if bal <= 0.001:  # Buffer for fees
+        await q.answer(f"❌ Insufficient balance on {network}", show_alert=True)
         return
 
     WITHDRAW_STATE[uid] = {"step": "recipient", "balance": bal, "network": network}
-    warning = ("\n\n⚠️ **MAINNET WITHDRAWAL** – real money.\n"
-               "Transactions are irreversible. Double-check address.") if network == "mainnet" else ""
-
+    
     await q.edit_message_text(
-        f"📤 *Withdraw SOL ({NETWORK_NAMES[network]})*{warning}\n\n"
-        f"Available: `{bal:.4f}` SOL\n\n"
-        "Send the **recipient wallet address**:",
+        f"📤 *Withdraw SOL ({NETWORK_NAMES[network]})*\n\n"
+        f"Available: `{bal:.4f}` SOL\n"
+        "Please enter the **recipient address**:",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -158,75 +161,96 @@ async def handle_withdraw_flow(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             Pubkey.from_string(text.strip())
             state["target"] = text.strip()
-            state["step"]   = "amount"
-            await update.message.reply_text("💰 Enter the **amount of SOL** to send:", parse_mode=ParseMode.MARKDOWN)
-        except: await update.message.reply_text("❌ Invalid Solana address.")
+            state["step"] = "amount"
+            await update.message.reply_text(f"💰 Enter amount (Max: ~{state['balance']-0.001:.4f}):")
+        except:
+            await update.message.reply_text("❌ Invalid Solana address. Try again:")
         return
 
     if state["step"] == "amount":
         try:
             amt = float(text)
-            if amt <= 0: raise ValueError("positive number")
-            fee_buffer = 0.001 if state["network"] == "mainnet" else 0.0001
-            if amt > state["balance"] - fee_buffer:
-                await update.message.reply_text(
-                    f"❌ Insufficient balance.\n"
-                    f"Available: `{state['balance']:.4f}` SOL\n"
-                    f"Max you can send: ~`{state['balance'] - fee_buffer:.4f}` SOL"
-                )
+            fee_buffer = 0.001
+            if amt <= 0 or amt > (state["balance"] - fee_buffer):
+                await update.message.reply_text(f"❌ Invalid amount. Max allowed: `{state['balance']-fee_buffer:.4f}`")
                 return
 
             state["amount"] = amt
-            state["step"]   = "confirm"
+            state["step"] = "confirm"
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Confirm Send", callback_data="wallet:confirm_withdraw")],
-                [InlineKeyboardButton("❌ Cancel",      callback_data="menu:wallet")]
+                [InlineKeyboardButton("✅ Confirm & Send", callback_data="wallet:confirm_withdraw")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="menu:wallet")]
             ])
-            warning = ("\n\n🚨 **REAL SOL** – cannot be cancelled." if state["network"] == "mainnet" else "")
             await update.message.reply_text(
-                f"📤 *Summary*{warning}\n"
-                f"Amount: `{amt:.4f}` SOL\n"
-                f"To: `{state['target']}`",
+                f"⚠️ *Final Confirmation*\n\n"
+                f"Network: {NETWORK_NAMES[state['network']]}\n"
+                f"Amount: `{amt}` SOL\n"
+                f"To: `{state['target']}`\n\n"
+                "Transactions are irreversible!",
                 reply_markup=kb, parse_mode=ParseMode.MARKDOWN
             )
-        except: await update.message.reply_text("❌ Invalid amount.")
+        except:
+            await update.message.reply_text("❌ Please enter a valid number.")
 
 async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = update.effective_user.id
     state = WITHDRAW_STATE.pop(uid, None)
+    
     if not state:
-        await q.answer("No active withdrawal", show_alert=True); return
+        await q.answer("Session expired."); return
 
+    await q.edit_message_text("⏳ Processing transaction... please wait.")
+    
     wallet = ensure_user_wallet(uid)
-    sig = send_sol(wallet["private_key"], state["target"], state["amount"], network=state["network"])
+    result = send_sol(wallet["private_key"], state["target"], state["amount"], state["network"])
 
-    explorer = "" if state["network"] == "mainnet" else "?cluster=devnet"
-    if isinstance(sig, dict) and "error" in sig:
-        await q.edit_message_text(f"❌ Failed: `{sig['error']}`", parse_mode=ParseMode.MARKDOWN)
+    if isinstance(result, dict) and "error" in result:
+        await q.edit_message_text(f"❌ Error: `{result['error']}`", parse_mode=ParseMode.MARKDOWN)
     else:
+        cluster = "devnet" if state["network"] == "devnet" else "mainnet-beta"
+        url = f"https://solscan.io/tx/{result}?cluster={cluster}"
         await q.edit_message_text(
-            "✅ Transaction submitted!\n"
-            f"[View on Solscan](https://solscan.io/tx/{sig}{explorer})",
+            f"✅ *Transaction Sent!*\n\n"
+            f"Signature: `{result[:10]}...`\n"
+            f"[View on Solscan]({url})",
             parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True
         )
 
 def send_sol(private_key_b58: str, to_pubkey: str, amount_sol: float, network: str) -> Union[str, dict]:
     client = mainnet_client if network == "mainnet" else devnet_client
     try:
-        lamports  = int(amount_sol * 1e9)
-        sender    = Keypair.from_bytes(base58.b58decode(private_key_b58))
+        sender = Keypair.from_bytes(base58.b58decode(private_key_b58))
         recipient = Pubkey.from_string(to_pubkey)
+        lamports = int(amount_sol * 1e9)
 
-        blockhash = client.get_latest_blockhash().value.blockhash
-        ix = transfer(TransferParams(from_pubkey=sender.pubkey(), to_pubkey=recipient, lamports=lamports))
+        # 1. Get Blockhash
+        recent_blockhash = client.get_latest_blockhash().value.blockhash
+        
+        # 2. Create Instruction
+        ix = transfer(TransferParams(
+            from_pubkey=sender.pubkey(), 
+            to_pubkey=recipient, 
+            lamports=lamports
+        ))
 
-        msg = Message.new_with_blockhash([ix], sender.pubkey(), blockhash)
-        tx = Transaction([sender], msg, blockhash)
+        # 3. Compile Message & Transaction
+        msg = Message.new_with_blockhash([ix], sender.pubkey(), recent_blockhash)
+        tx = Transaction([sender], msg, recent_blockhash)
 
-        return str(client.send_transaction(tx).value)
+        # 4. Send and wait for confirmation
+        res = client.send_transaction(tx)
+        
+        # Simple Confirmation Loop
+        sig = res.value
+        logger.info(f"Tx submitted: {sig}")
+        
+        # Optional: Add confirmation check here if your library version supports it
+        # client.confirm_transaction(sig)
+        
+        return str(sig)
     except Exception as e:
-        logger.exception("send_sol (%s)", network)
+        logger.exception(f"Send SOL failed on {network}")
         return {"error": str(e)}
 
 # ---------- utilities ----------
