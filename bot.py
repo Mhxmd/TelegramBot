@@ -2,7 +2,7 @@
 # TELEGRAM MARKETPLACE BOT
 # Modular — Shopping Cart + Escrow + Wallet + Chat + Stripe/Nets/PayNow
 # ==========================
-
+import requests
 import time
 import os
 import logging
@@ -661,12 +661,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await q.answer(f"Withdraw error: {e}", show_alert=True)
                 return
             
-        # --- CRYPTO EXECUTION (PHASE 2: SENDING) ---
+
+# --- CRYPTO EXECUTION (PHASE 2: SENDING) ---
         if data.startswith("confirm_crypto_pay:"):
             parts = data.split(":")
-            # parts[2] is amount, parts[3] is target_sku
+            # parts format: confirm_crypto_pay:solana:amount:sku:network
             usd_amt = float(parts[2])
             target_sku = parts[3] if len(parts) > 3 else "Cart"
+            # Get network from callback, or default to mainnet-beta if missing
+            selected_network = parts[4] if len(parts) > 4 else "mainnet-beta"
             
             if target_sku == "Cart":
                 cart_items = shopping_cart.get_cart(user_id)
@@ -675,6 +678,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_item_sku = list(cart_items.keys())[0]
             else:
                 first_item_sku = target_sku
+
+            # 1. Fetch Live Price and Calculate
+            current_price = get_live_sol_price()
+            sol_amt = usd_amt / current_price 
 
             # 2. Identify the seller
             seller_id_str, product_data = storage.get_seller_product_by_sku(first_item_sku)
@@ -687,9 +694,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dest_addr = seller_wallet["public_key"] 
             
             # 3. Perform Transfer
-            sol_amt = usd_amt / 150.0 
             user_wallet = wallet.ensure_user_wallet(user_id)
-            result = wallet.send_sol(user_wallet["private_key"], dest_addr, float(sol_amt))
+            
+            # We pass the 'selected_network' to fix your positional argument error
+            result = wallet.send_sol(
+                user_wallet["private_key"], 
+                dest_addr, 
+                float(sol_amt), 
+                network=selected_network
+            )
             
             if isinstance(result, dict) and "error" in result:
                 return await q.edit_message_text(f"❌ Transaction Failed: {result['error']}")
@@ -698,12 +711,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target_sku == "Cart":
                 shopping_cart.clear_cart(user_id)
             
-            storage.add_order(user_id, f"Direct: {first_item_sku}", 1, usd_amt, "Solana", seller_id)
+            storage.add_order(user_id, f"Direct: {first_item_sku}", 1, usd_amt, f"Solana ({selected_network})", seller_id)
             
             kb_back = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="menu:main")]])
-            return await q.edit_message_text(f"✅ *Payment Sent!*\n\nID: `{result}`", 
-                                     parse_mode="Markdown", reply_markup=kb_back)
-
+            
+            success_msg = (
+                f"✅ *Payment Sent!*\n\n"
+                f"Network: `{selected_network}`\n"
+                f"Rate: `1 SOL = ${current_price:.2f}`\n"
+                f"Total Paid: `{sol_amt:.5f} SOL` (${usd_amt})\n\n"
+                f"TX ID: `{result}`"
+            )
+            
+            return await q.edit_message_text(success_msg, parse_mode="Markdown", reply_markup=kb_back)
         # ESCROW SYSTEM
         if data.startswith("payconfirm:"):
             return await ui.handle_pay_confirm(update, context, data.split(":",1)[1])
@@ -813,6 +833,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(f"⚠️ Error: {e}")
         except:
             await context.bot.send_message(update.effective_user.id, f"⚠️ Error: {e}")
+# ==========================
+#Get solana Live prices
+# ==========================
+
+def get_live_sol_price():
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        return float(data['solana']['usd'])
+    except Exception as e:
+        print(f"Price Fetch Error: {e}")
+        return 150.0  # Fallback price if the API is down so your bot doesn't crash
 
 # ==========================
 # MESSAGE ROUTER

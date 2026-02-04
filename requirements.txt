@@ -17,3 +17,4 @@ cryptography
 base58
 solana
 solders
+requests
